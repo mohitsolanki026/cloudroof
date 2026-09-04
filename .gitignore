@@ -1,0 +1,18 @@
+# build outputs
+/bin/
+/web/dist/*
+!/web/dist/.gitkeep
+/web/node_modules/
+
+# runtime data — never commit a database or a master key
+/data/
+*.db
+*.db-wal
+*.db-shm
+master.key
+
+# editor / os
+.DS_Store
+*.swp
+.idea/
+.vscode/
