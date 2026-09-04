@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,13 @@ const actor = "admin" // single-user in v0.1; multi-user lands in v2.5
 
 func pathID(r *http.Request, name string) (int64, error) {
 	return strconv.ParseInt(r.PathValue(name), 10, 64)
+}
+
+func ptrEq(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // --- machines ---------------------------------------------------------------
@@ -81,6 +89,17 @@ type machineInput struct {
 	Provider       string   `json:"provider"`
 }
 
+// normalize trims what users paste. IPv6 literals lose their brackets here
+// and get them back in resolveTarget via net.JoinHostPort.
+func (in *machineInput) normalize() {
+	in.Name = strings.TrimSpace(in.Name)
+	in.SSHHost = strings.Trim(strings.TrimSpace(in.SSHHost), "[]")
+	in.SSHUser = strings.TrimSpace(in.SSHUser)
+	if in.SSHPort == 0 {
+		in.SSHPort = 22
+	}
+}
+
 func (in machineInput) validate() error {
 	if strings.TrimSpace(in.Name) == "" {
 		return errors.New("name is required")
@@ -96,10 +115,11 @@ func (in machineInput) validate() error {
 
 func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	var in machineInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
+	in.normalize()
 	if err := in.validate(); err != nil {
 		badRequest(w, err.Error())
 		return
@@ -129,18 +149,22 @@ func (s *Server) updateMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in machineInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
+	in.normalize()
 	if err := in.validate(); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
 
-	// If the host identity changed, the pooled connection and the pinned
-	// key belong to a different box now.
-	hostChanged := m.SSHHost != in.SSHHost || m.SSHPort != in.SSHPort || m.SSHUser != in.SSHUser
+	// A different host or port is a different box: forget its pinned key and
+	// fingerprint so the next probe starts clean. A different user or
+	// credential is the same box but a different session: just drop the
+	// pooled connection so nothing keeps running under the old identity.
+	boxChanged := m.SSHHost != in.SSHHost || m.SSHPort != in.SSHPort
+	sessionChanged := boxChanged || m.SSHUser != in.SSHUser || !ptrEq(m.CredentialID, in.CredentialID)
 
 	m.Name, m.Tags = in.Name, in.Tags
 	m.SSHHost, m.SSHPort, m.SSHUser = in.SSHHost, in.SSHPort, in.SSHUser
@@ -151,9 +175,12 @@ func (s *Server) updateMachine(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if hostChanged {
+	if sessionChanged {
 		s.broker.Drop(m.ID)
 		_ = s.store.SetReach(m.ID, store.ReachUnknown, "")
+	}
+	if boxChanged {
+		_ = s.store.ResetHostIdentity(m.ID)
 	}
 	m, _ = s.store.GetMachine(id)
 	writeJSON(w, 200, machineView{Machine: m})
@@ -276,7 +303,7 @@ func (s *Server) powerMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in powerInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
@@ -388,9 +415,11 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "bad id")
 		return
 	}
+	// ContentLength is -1 for chunked bodies, so test for a body rather
+	// than for a positive length; an empty body is a valid Tier-0 request.
 	var in actionInput
-	if r.ContentLength > 0 {
-		if err := readJSON(r, &in); err != nil {
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := readJSON(w, r, &in); err != nil && !errors.Is(err, io.EOF) {
 			badRequest(w, err.Error())
 			return
 		}
@@ -452,7 +481,7 @@ func (s *Server) trustHostKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in trustInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
@@ -503,7 +532,7 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	var in credentialInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}
@@ -572,13 +601,16 @@ func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "bad id")
 		return
 	}
+	// Machines that used it lose their credential (FK SET NULL) and their
+	// pooled connection — only theirs; other machines' terminals stay up.
+	ids, _ := s.store.MachineIDsByCredential(id)
 	if err := s.store.DeleteCredential(id); err != nil {
 		fail(w, err)
 		return
 	}
-	// Machines using it now have credential_id = NULL; their pooled
-	// connections are stale.
-	s.broker.Close()
+	for _, mid := range ids {
+		s.broker.Drop(mid)
+	}
 	w.WriteHeader(204)
 }
 
@@ -601,7 +633,7 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	var in accountInput
-	if err := readJSON(r, &in); err != nil {
+	if err := readJSON(w, r, &in); err != nil {
 		badRequest(w, err.Error())
 		return
 	}

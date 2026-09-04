@@ -39,7 +39,7 @@ type HostKeyMismatchError struct {
 	Fingerprint string
 }
 
-func (e *HostKeyMismatchError) Error() string { return ErrHostKeyMismatch.Error() }
+func (e *HostKeyMismatchError) Error() string        { return ErrHostKeyMismatch.Error() }
 func (e *HostKeyMismatchError) Is(target error) bool { return target == ErrHostKeyMismatch }
 
 // HostKeyPolicy decides whether an observed host key is acceptable.
@@ -72,8 +72,10 @@ type Target struct {
 }
 
 const (
-	dialTimeout   = 10 * time.Second
-	keepaliveTick = 30 * time.Second
+	dialTimeout    = 10 * time.Second
+	keepaliveTick  = 30 * time.Second
+	keepaliveReply = 10 * time.Second
+	shellSetup     = 30 * time.Second
 )
 
 // Broker holds live connections. Connections are dialed lazily and dropped on
@@ -149,8 +151,10 @@ func (b *Broker) Close() {
 	}
 }
 
-// keepalive sends periodic global requests; a failure means the transport is
-// dead and the connection is evicted so the next call redials cleanly.
+// keepalive sends periodic global requests; a failure or a missing reply
+// means the transport is dead and the connection is evicted so the next call
+// redials cleanly. The reply has its own deadline: a black-holed peer never
+// answers, and SendRequest alone would block until TCP gives up.
 func (b *Broker) keepalive(id int64, c *conn) {
 	t := time.NewTicker(keepaliveTick)
 	defer t.Stop()
@@ -159,11 +163,40 @@ func (b *Broker) keepalive(id int64, c *conn) {
 		case <-c.done:
 			return
 		case <-t.C:
-			if _, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-				b.Drop(id)
+			reply := make(chan error, 1)
+			go func() {
+				_, _, err := c.client.SendRequest("keepalive@openssh.com", true, nil)
+				reply <- err
+			}()
+			select {
+			case err := <-reply:
+				if err != nil {
+					b.Drop(id)
+					return
+				}
+			case <-time.After(keepaliveReply):
+				b.Drop(id) // closing the client unblocks the pending SendRequest
+				return
+			case <-c.done:
 				return
 			}
 		}
+	}
+}
+
+// withDeadline runs fn, which has no context of its own (NewSession, Start,
+// RequestPty), and abandons it when ctx expires. Abandoning means dropping
+// the connection: closing the client is what unblocks the stuck call, and a
+// transport that cannot open a session is not worth keeping anyway.
+func (b *Broker) withDeadline(ctx context.Context, id int64, fn func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		b.Drop(id)
+		return ErrTimeout
 	}
 }
 
@@ -321,13 +354,23 @@ func (b *Broker) Exec(ctx context.Context, t Target, command string, opts ExecOp
 		opts.MaxOutput = defaultMaxOutput
 	}
 
+	// The deadline covers everything: dial, session open, the command, and
+	// the wait. A half-open transport can otherwise block NewSession until
+	// the kernel gives up on TCP retransmits, long after any handler deadline.
+	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
 	client, err := b.Get(ctx, t)
 	if err != nil {
 		return ExecResult{}, err
 	}
 
-	sess, err := client.NewSession()
-	if err != nil {
+	var sess *ssh.Session
+	if err := b.withDeadline(ctx, t.ID, func() error {
+		var e error
+		sess, e = client.NewSession()
+		return e
+	}); err != nil {
 		// A dead transport surfaces here; evict so the retry redials.
 		b.Drop(t.ID)
 		return ExecResult{}, fmt.Errorf("ssh: open session: %w", err)
@@ -350,11 +393,8 @@ func (b *Broker) Exec(ctx context.Context, t Target, command string, opts ExecOp
 		}()
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
-
 	start := time.Now()
-	if err := sess.Start(command); err != nil {
+	if err := b.withDeadline(ctx, t.ID, func() error { return sess.Start(command) }); err != nil {
 		return ExecResult{}, fmt.Errorf("ssh: start: %w", err)
 	}
 
@@ -364,9 +404,15 @@ func (b *Broker) Exec(ctx context.Context, t Target, command string, opts ExecOp
 	select {
 	case <-ctx.Done():
 		// Best effort: ask nicely, then close the channel. Not every sshd
-		// honors signals, which is why the session close follows.
+		// honors signals, which is why the session close follows. Then give
+		// the copy goroutines a moment to finish writing before the buffers
+		// are read; Wait is what joins them.
 		_ = sess.Signal(ssh.SIGTERM)
 		sess.Close()
+		select {
+		case <-waitErr:
+		case <-time.After(2 * time.Second):
+		}
 		return ExecResult{
 			Stdout:   stdout.String(),
 			Stderr:   stderr.String(),
@@ -400,12 +446,15 @@ func (b *Broker) Exec(ctx context.Context, t Target, command string, opts ExecOp
 // limitedBuffer keeps the first max bytes and drops the rest, so a runaway
 // `tail -f` cannot exhaust memory.
 type limitedBuffer struct {
+	mu        sync.Mutex
 	buf       bytes.Buffer
 	max       int
 	truncated bool
 }
 
 func (l *limitedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	room := l.max - l.buf.Len()
 	if room <= 0 {
 		l.truncated = true
@@ -420,6 +469,8 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (l *limitedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.truncated {
 		return l.buf.String() + "\n… output truncated"
 	}
@@ -438,12 +489,20 @@ type Shell struct {
 
 // OpenShell requests a PTY and starts the user's login shell.
 func (b *Broker) OpenShell(ctx context.Context, t Target, cols, rows int) (*Shell, error) {
-	client, err := b.Get(ctx, t)
+	// Setup is bounded; the shell itself lives as long as the caller's ctx.
+	setupCtx, cancel := context.WithTimeout(ctx, shellSetup)
+	defer cancel()
+
+	client, err := b.Get(setupCtx, t)
 	if err != nil {
 		return nil, err
 	}
-	sess, err := client.NewSession()
-	if err != nil {
+	var sess *ssh.Session
+	if err := b.withDeadline(setupCtx, t.ID, func() error {
+		var e error
+		sess, e = client.NewSession()
+		return e
+	}); err != nil {
 		b.Drop(t.ID)
 		return nil, fmt.Errorf("ssh: open session: %w", err)
 	}
@@ -459,7 +518,7 @@ func (b *Broker) OpenShell(ctx context.Context, t Target, cols, rows int) (*Shel
 	if rows <= 0 {
 		rows = 24
 	}
-	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
+	if err := b.withDeadline(setupCtx, t.ID, func() error { return sess.RequestPty("xterm-256color", rows, cols, modes) }); err != nil {
 		sess.Close()
 		return nil, fmt.Errorf("ssh: request pty: %w", err)
 	}
@@ -478,7 +537,7 @@ func (b *Broker) OpenShell(ctx context.Context, t Target, cols, rows int) (*Shel
 		return nil, err
 	}
 
-	if err := sess.Shell(); err != nil {
+	if err := b.withDeadline(setupCtx, t.ID, func() error { return sess.Shell() }); err != nil {
 		sess.Close()
 		return nil, fmt.Errorf("ssh: start shell: %w", err)
 	}

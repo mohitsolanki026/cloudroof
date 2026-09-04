@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, hasCloud, hasHost, renderCommand, canRun, ApiError, type Action, type Machine, type PowerAction, type HostKey } from '../api'
 import { StatusDots, PowerChip, ReachChip, ProviderChip } from '../components/Status'
 import { Confirm } from '../components/Confirm'
@@ -39,6 +39,15 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
   const [probing, setProbing] = useState(false)
   const toast = useToast()
 
+  // runAction reads the machine through a ref so its identity does not change
+  // every time load() refreshes state. Tab effects depend on runAction; if it
+  // changed on every load, an error path that calls load() would re-run the
+  // tab, fail again, load again — an unbounded loop.
+  const mRef = useRef<Machine | null>(null)
+  useEffect(() => {
+    mRef.current = m
+  }, [m])
+
   const load = useCallback(async () => {
     const [mm, aa] = await Promise.all([api.machines.get(id), api.machines.actions(id)])
     setM(mm)
@@ -64,33 +73,49 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
 
   // gate() asks the user through the Confirm dialog for Tier 1/2 and resolves
   // true when they accept. Tier 0 resolves immediately.
-  const gate = (p: Omit<Pending, 'resolve'>): Promise<boolean> =>
-    new Promise((resolve) => setPending({ ...p, resolve }))
+  const gate = useCallback(
+    (p: Omit<Pending, 'resolve'>): Promise<boolean> => new Promise((resolve) => setPending({ ...p, resolve })),
+    [],
+  )
 
   // runAction is the one path every button goes through.
   const runAction = useCallback(
     async <T,>(a: Action, params: Record<string, string> = {}): Promise<T | null> => {
-      if (!m) return null
+      const cur = mRef.current
+      if (!cur) return null
       let confirm = false
       let confirmName = ''
-      if (a.danger === 1 || a.danger === 2) {
+      const gated = a.danger === 1 || a.danger === 2
+      if (gated) {
         const ok = await gate({
           kind: 'action',
           id: a.id,
           label: a.label,
-          command: renderCommand(a, params, m.facts),
-          danger: a.danger,
+          command: renderCommand(a, params, cur.facts),
+          danger: a.danger as 1 | 2,
           params,
         })
-        setPending(null)
-        if (!ok) return null
+        if (!ok) {
+          setPending(null)
+          return null
+        }
         confirm = true
-        confirmName = m.name
+        confirmName = cur.name
       }
+      // The dialog stays mounted while the request runs so its busy state
+      // ("Running…", Cancel disabled) is actually visible.
       setBusy(true)
       try {
         const res = await api.machines.run<T>(id, a.id, params, confirm, confirmName)
-        if (a.danger > 0) toast(`${a.label}: ${res.run.exitCode === 0 ? 'ok' : 'exit ' + res.run.exitCode}`)
+        const code = res.run.exitCode
+        const stderr = (res.run.stderr || '').split('\n').find((l) => l.trim()) ?? ''
+        if (code !== 0 && (gated || stderr || looksEmpty(res.data))) {
+          // A read action that failed on the host would otherwise render as a
+          // plausible empty table. Say what the host said.
+          toast(`${a.label}: exit ${code}${stderr ? ' — ' + stderr : ''}`, true)
+        } else if (gated) {
+          toast(`${a.label}: ok`)
+        }
         return res.data
       } catch (e: any) {
         if (e instanceof ApiError && (e.code === 'unreachable' || e.code === 'auth_failed' || e.code === 'hostkey_changed')) load()
@@ -98,9 +123,10 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
         return null
       } finally {
         setBusy(false)
+        if (gated) setPending(null)
       }
     },
-    [m, id, toast, load],
+    [id, toast, load, gate],
   )
 
   const power = async (action: PowerAction) => {
@@ -114,8 +140,10 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
       danger,
       params: {},
     })
-    setPending(null)
-    if (!ok) return
+    if (!ok) {
+      setPending(null)
+      return
+    }
     setBusy(true)
     try {
       await api.machines.power(id, action, true, m.name)
@@ -125,6 +153,7 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
       toast(e.message, true)
     } finally {
       setBusy(false)
+      setPending(null)
     }
   }
 
@@ -132,6 +161,9 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
   const tabs = TAB_ORDER.filter((t) => {
     if (t === 'overview' || t === 'activity') return true
     if (t === 'terminal') return m ? hasHost(m) : false
+    // Every other tab runs actions the engine refuses until the host has
+    // been fingerprinted; offering them earlier just produces a 409.
+    if (!m?.facts) return false
     return categories.has(t)
   })
 
@@ -244,7 +276,7 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
       {tab === 'services' && <Services m={m} run={runAction} actions={actions} />}
       {tab === 'processes' && <Processes run={runAction} actions={actions} />}
       {tab === 'network' && <Network run={runAction} action={byId('network.ports')} />}
-      {tab === 'disk' && <Disk run={runAction} actions={actions} />}
+      {tab === 'disk' && <Disk m={m} run={runAction} actions={actions} />}
       {tab === 'terminal' && hasHost(m) && <Terminal machineId={id} />}
       {tab === 'activity' && (
         <div className="card">
@@ -271,6 +303,14 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
 }
 
 type Runner = <T>(a: Action, params?: Record<string, string>) => Promise<T | null>
+
+// looksEmpty: a parsed payload whose only content is empty arrays — what a
+// failed list command parses into.
+function looksEmpty(d: unknown): boolean {
+  if (!d || typeof d !== 'object') return false
+  const arrays = Object.values(d as Record<string, unknown>).filter(Array.isArray)
+  return arrays.length > 0 && arrays.every((a) => a.length === 0)
+}
 
 // --- overview -------------------------------------------------------------------
 
@@ -410,10 +450,13 @@ function Services({ m, run, actions }: { m: Machine; run: Runner; actions: Actio
   const list = actions.find((a) => a.id === 'services.list')
   const byId = (id: string) => actions.find((a) => a.id === id)
 
+  const [failed, setFailed] = useState(false)
   const refresh = useCallback(async () => {
     if (!list) return
+    setFailed(false)
     const d = await run<{ units: Unit[] }>(list)
     if (d) setUnits(d.units)
+    else setFailed(true)
   }, [list, run])
 
   useEffect(() => {
@@ -467,7 +510,7 @@ function Services({ m, run, actions }: { m: Machine; run: Runner; actions: Actio
       )}
       <div className="card">
         {units === null ? (
-          <div className="empty">Listing units…</div>
+          <div className="empty">{failed ? 'Could not list units — see the toast for the reason.' : 'Listing units…'}</div>
         ) : (
           <div className="tw">
             <table>
@@ -539,14 +582,17 @@ interface Proc {
 
 function Processes({ run, actions }: { run: Runner; actions: Action[] }) {
   const [procs, setProcs] = useState<Proc[] | null>(null)
+  const [failed, setFailed] = useState(false)
   const top = actions.find((a) => a.id === 'processes.top')
   const term = actions.find((a) => a.id === 'processes.terminate')
   const kill = actions.find((a) => a.id === 'processes.kill')
 
   const refresh = useCallback(async () => {
     if (!top) return
+    setFailed(false)
     const d = await run<{ processes: Proc[] }>(top)
     if (d) setProcs(d.processes)
+    else setFailed(true)
   }, [top, run])
 
   useEffect(() => {
@@ -570,7 +616,7 @@ function Processes({ run, actions }: { run: Runner; actions: Action[] }) {
       </div>
       <div className="card">
         {procs === null ? (
-          <div className="empty">Reading…</div>
+          <div className="empty">{failed ? 'Could not read processes — see the toast for the reason.' : 'Reading…'}</div>
         ) : (
           <div className="tw">
             <table>
@@ -631,10 +677,13 @@ interface Listener {
 
 function Network({ run, action }: { run: Runner; action?: Action }) {
   const [ls, setLs] = useState<Listener[] | null>(null)
+  const [failed, setFailed] = useState(false)
   const refresh = useCallback(async () => {
     if (!action) return
+    setFailed(false)
     const d = await run<{ listeners: Listener[] }>(action)
     if (d) setLs(d.listeners)
+    else setFailed(true)
   }, [action, run])
   useEffect(() => {
     refresh()
@@ -651,7 +700,7 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
       </div>
       <div className="card">
         {ls === null ? (
-          <div className="empty">Reading…</div>
+          <div className="empty">{failed ? 'Could not read sockets — see the toast for the reason.' : 'Reading…'}</div>
         ) : (
           <div className="tw">
             <table>
@@ -687,7 +736,7 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
 
 // --- disk -----------------------------------------------------------------------
 
-function Disk({ run, actions }: { run: Runner; actions: Action[] }) {
+function Disk({ m, run, actions }: { m: Machine; run: Runner; actions: Action[] }) {
   const [path, setPath] = useState('/')
   const [dirs, setDirs] = useState<{ path: string; size: number }[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -710,7 +759,7 @@ function Disk({ run, actions }: { run: Runner; actions: Action[] }) {
           {busy ? 'Scanning…' : 'Find largest directories'}
         </button>
         <span className="grow" />
-        {vacuum && (
+        {vacuum && canRun(vacuum, m.facts) && (
           <button className="btn" onClick={() => run(vacuum)}>
             Vacuum journal to 7d
           </button>

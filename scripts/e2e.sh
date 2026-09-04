@@ -132,6 +132,18 @@ st, r = call("POST", f"/api/machines/{mid}/actions/services.status", {"params": 
 check("missing param -> 400", st == 400)
 st, r = call("POST", f"/api/machines/{mid}/actions/nope.nothing")
 check("unknown action -> 400", st == 400)
+
+print("-- browser guard: CSRF and DNS rebinding --")
+API_PORT = B.rsplit(":", 1)[1]
+def raw(method, path, headers, body=b""):
+    req = urllib.request.Request(B + path, data=body, method=method, headers=headers)
+    try: return urllib.request.urlopen(req, timeout=30).status
+    except urllib.error.HTTPError as e: return e.code
+check("text/plain body -> 415 (no-preflight CSRF shape)", raw("POST", f"/api/machines/{mid}/actions/system.overview", {"Content-Type": "text/plain"}, b"{}") == 415)
+check("foreign Origin -> 403", raw("POST", f"/api/machines/{mid}/actions/system.overview", {"Content-Type": "application/json", "Origin": "http://attacker.example"}, b"{}") == 403)
+check("cross-site Sec-Fetch-Site -> 403", raw("POST", f"/api/machines/{mid}/probe", {"Sec-Fetch-Site": "cross-site"}) == 403)
+check("unknown Host header -> 421 (rebinding)", raw("GET", "/api/machines", {"Host": "attacker.example"}) == 421)
+check("same-origin Origin passes", raw("GET", "/api/machines", {"Origin": f"http://127.0.0.1:{API_PORT}"}) == 200)
 st, r = call("POST", f"/api/machines/{mid}/actions/services.list")
 check("valid action before facts -> 409", st == 409 and r["code"] == "not_available")
 st, runs = call("GET", f"/api/runs?machine={mid}")

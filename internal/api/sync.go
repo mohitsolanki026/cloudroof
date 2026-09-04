@@ -31,6 +31,9 @@ func (s *Server) providerFor(accountID int64) (provider.Provider, error) {
 // new instances become machines, known ones get their cloud half refreshed,
 // and ones that vanished are flagged missing rather than deleted.
 func (s *Server) sync(ctx context.Context, accountID int64) (syncResult, error) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
 	a, err := s.store.GetCloudAccount(accountID)
 	if err != nil {
 		return syncResult{}, err
@@ -80,7 +83,12 @@ func (s *Server) refreshPowerStates(ctx context.Context) {
 		return
 	}
 	for _, a := range accounts {
-		if _, err := s.sync(ctx, a.ID); err != nil {
+		// Bounded per account so one stalled provider cannot wedge the
+		// ticker for everyone else.
+		callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_, err := s.sync(callCtx, a.ID)
+		cancel()
+		if err != nil {
 			s.log.Warn("power refresh failed", "account", a.Name, "err", err)
 		}
 	}

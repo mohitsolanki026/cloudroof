@@ -44,6 +44,23 @@ does not exist as a button and never will.
 
 Every button shows the exact command before it runs and logs it after.
 
+## Network exposure
+
+There is no login yet. Bosun therefore binds to `127.0.0.1:7070` by default,
+refuses requests whose `Host` header is not itself (DNS rebinding), and
+refuses cross-origin browser requests (CSRF). To reach it from another
+machine, opt in explicitly and name the hosts you will use:
+
+```
+./bin/bosun -addr 0.0.0.0:7070 -hosts bosun.lan,10.0.0.5
+docker run -d -p 7070:7070 -e BOSUN_HOSTS=bosun.lan -v bosun:/data bosun
+```
+
+Binding a network address without `-hosts` works but accepts any `Host` and
+logs a warning at startup. Put Bosun behind a reverse proxy that adds
+authentication and TLS before exposing it beyond a trusted network.
+Multi-user auth is on the roadmap (v2.5).
+
 ## Providers
 
 v0.1: Hetzner Cloud. DigitalOcean and AWS EC2 are next.

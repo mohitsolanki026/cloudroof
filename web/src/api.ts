@@ -158,6 +158,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return json as T
 }
 
+// Go marshals a nil slice as null. The server now sends [] for these, but the
+// client should not depend on it.
+function normalizeActions(as: Action[]): Action[] {
+  return (as ?? []).map((a) => ({ ...a, params: a.params ?? [], requires: a.requires ?? [] }))
+}
+
 export const api = {
   machines: {
     list: () => req<Machine[]>('GET', '/api/machines'),
@@ -168,7 +174,7 @@ export const api = {
     probe: (id: number) => req<Machine>('POST', `/api/machines/${id}/probe`),
     power: (id: number, action: PowerAction, confirm: boolean, confirmName: string) =>
       req<Machine>('POST', `/api/machines/${id}/power`, { action, confirm, confirmName }),
-    actions: (id: number) => req<Action[]>('GET', `/api/machines/${id}/actions`),
+    actions: (id: number) => req<Action[]>('GET', `/api/machines/${id}/actions`).then(normalizeActions),
     run: <T = unknown>(
       id: number,
       actionId: string,
@@ -196,7 +202,7 @@ export const api = {
     list: (machineId?: number, limit = 100) =>
       req<Run[]>('GET', `/api/runs?limit=${limit}${machineId ? `&machine=${machineId}` : ''}`),
   },
-  catalog: () => req<Action[]>('GET', '/api/catalog'),
+  catalog: () => req<Action[]>('GET', '/api/catalog').then(normalizeActions),
   providers: () => req<string[]>('GET', '/api/providers'),
 }
 
@@ -211,7 +217,7 @@ export const hasHost = (m: Machine) => m.sshHost !== '' && m.sshUser !== '' && m
 export function renderCommand(a: Action, params: Record<string, string>, facts: Facts | null): string {
   if (a.parse === 'overview') return 'sh -s  # batched overview probe'
   let cmd = a.command
-  for (const p of a.params) {
+  for (const p of a.params ?? []) {
     const v = params[p.name] ?? `{{${p.name}}}`
     cmd = cmd.replaceAll(`{{${p.name}}}`, `'${v}'`)
   }

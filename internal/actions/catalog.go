@@ -50,16 +50,16 @@ type Param struct {
 }
 
 type Action struct {
-	ID       string   `json:"id"`
-	Label    string   `json:"label"`
-	Category string   `json:"category"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Category string `json:"category"`
 	// Requires lists capabilities the host must advertise (from facts).
 	// All must be present.
 	Requires []string `json:"requires"`
 	// Command is a shell template. {{name}} is replaced with the quoted param.
-	Command string  `json:"command"`
-	Params  []Param `json:"params"`
-	Danger  int     `json:"danger"`
+	Command string        `json:"command"`
+	Params  []Param       `json:"params"`
+	Danger  int           `json:"danger"`
 	Sudo    Sudo          `json:"sudo"`
 	Timeout time.Duration `json:"-"`
 	// Parse names a parser in parsers.go; "" means raw text.
@@ -71,7 +71,9 @@ type Action struct {
 
 // Patterns shared across params. Deliberately tight.
 var (
-	reUnit = regexp.MustCompile(`^[A-Za-z0-9@._:\\-]{1,255}$`)
+	// Anchored to an alphanumeric so a value can never be read as an option
+	// (`systemctl stop --now` style) — quoting stops shell breakout, not that.
+	reUnit = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._:\\-]{0,254}$`)
 	rePID  = regexp.MustCompile(`^[0-9]{1,10}$`)
 	reInt  = regexp.MustCompile(`^[0-9]{1,6}$`)
 	rePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]{0,255}$`)
@@ -85,8 +87,8 @@ echo "now=$(date -u +%s 2>/dev/null)"
 echo "uptime_s=$(cut -d. -f1 /proc/uptime 2>/dev/null)"
 echo "load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
 echo "cpus=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null)"
-awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
-     END{print "mem_total_kb=" t; print "mem_avail_kb=" a; print "swap_total_kb=" st; print "swap_free_kb=" sf}' /proc/meminfo 2>/dev/null
+awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
+     END{print "mem_total_kb=" t; print "mem_avail_kb=" a; print "mem_free_kb=" f; print "mem_buffers_kb=" b; print "mem_cached_kb=" c; print "swap_total_kb=" st; print "swap_free_kb=" sf}' /proc/meminfo 2>/dev/null
 df -Pk 2>/dev/null | awk 'NR>1 {print "disk=" $1 "|" $2 "|" $3 "|" $4 "|" $6}'
 echo "users=$(who 2>/dev/null | wc -l | tr -d ' ')"
 if [ -f /var/run/reboot-required ]; then echo "reboot_required=1"; else echo "reboot_required=0"; fi
@@ -161,7 +163,7 @@ var Catalog = []Action{
 	// --- processes --------------------------------------------------------
 	{
 		ID: "processes.top", Label: "Top processes", Category: "processes",
-		Command: "ps -eo pid,user:20,pcpu,pmem,rss,etimes,comm --sort=-pcpu --no-headers | head -60",
+		Command: "ps -eo pid,user:20,pcpu,pmem,rss,etimes,comm --no-headers --sort=-pcpu",
 		Parse:   "ps", Danger: DangerRead,
 	},
 	{
@@ -190,7 +192,9 @@ var Catalog = []Action{
 	// --- disk -------------------------------------------------------------
 	{
 		ID: "disk.largest", Label: "Largest directories", Category: "disk",
-		Command: "du -xk -d 2 {{path}} 2>/dev/null | sort -rn | head -30",
+		// stderr is not discarded: "permission denied" lines are exactly
+		// what explains a partial result, and they belong in the audit row.
+		Command: "du -xk -d 2 {{path}} | sort -rn | head -30",
 		Params:  []Param{{Name: "path", Label: "Path", Pattern: rePath}},
 		Parse:   "du", Danger: DangerRead, Sudo: SudoPreferred,
 		Timeout: 120 * time.Second,
@@ -247,4 +251,17 @@ func Available(caps []string) []Action {
 		}
 	}
 	return out
+}
+
+func init() {
+	// JSON null for a nil slice is a foot-gun for every client; hand out
+	// empty lists instead.
+	for i := range Catalog {
+		if Catalog[i].Requires == nil {
+			Catalog[i].Requires = []string{}
+		}
+		if Catalog[i].Params == nil {
+			Catalog[i].Params = []Param{}
+		}
+	}
 }

@@ -8,8 +8,10 @@ package hetzner
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 
@@ -28,6 +30,9 @@ func init() {
 			client: hcloud.NewClient(
 				hcloud.WithToken(token),
 				hcloud.WithApplication("bosun", "0.1"),
+				// Callers pass contexts, but a client-level ceiling guards
+				// the one path (hcloud's own retries) that outlives them.
+				hcloud.WithHTTPClient(&http.Client{Timeout: 45 * time.Second}),
 			),
 		}, nil
 	})

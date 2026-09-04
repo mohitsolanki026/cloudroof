@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var ErrNotFound = errors.New("store: not found")
@@ -116,9 +117,28 @@ func (s *Store) GetCloudAccount(id int64) (CloudAccount, error) {
 	return a, err
 }
 
+// DeleteCloudAccount removes the account and strips the cloud half from every
+// machine it owned. The FK alone would only null cloud_account_id and leave a
+// stale provider/instance/power_state the UI would present as live — and a
+// re-added account would then collide with those orphaned instance IDs.
 func (s *Store) DeleteCloudAccount(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM cloud_accounts WHERE id = ?`, id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		UPDATE machines SET
+			cloud_account_id = NULL, provider = '', instance_id = '', region = '',
+			instance_type = '', power_state = 'unknown', cloud_synced_at = NULL,
+			missing = 0, updated_at = ?
+		WHERE cloud_account_id = ?`, ms(time.Now()), id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM cloud_accounts WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetSyncResult records the outcome of a sync attempt. syncErr is stored rather
@@ -236,6 +256,36 @@ func (s *Store) UpdateMachine(m Machine) error {
 
 func (s *Store) DeleteMachine(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM machines WHERE id = ?`, id)
+	return err
+}
+
+// MachineIDsByCredential lists machines that authenticate with a credential,
+// so a deletion can drop exactly their pooled connections.
+func (s *Store) MachineIDsByCredential(credID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT id FROM machines WHERE credential_id = ?`, credID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ResetHostIdentity forgets everything learned from a machine's host — the
+// pinned key and the fingerprint — for when it is re-pointed at a different
+// box. The next probe pins and fingerprints fresh.
+func (s *Store) ResetHostIdentity(id int64) error {
+	if _, err := s.db.Exec(`DELETE FROM host_keys WHERE machine_id = ?`, id); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM host_facts WHERE machine_id = ?`, id)
 	return err
 }
 
@@ -587,6 +637,10 @@ func nullIntVal(v *int) any {
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
+	}
+	// Back off to a rune boundary so the stored text stays valid UTF-8.
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
 	}
 	return s[:max] + "\n… truncated"
 }

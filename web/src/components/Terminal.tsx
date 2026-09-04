@@ -39,52 +39,66 @@ export function Terminal({ machineId }: { machineId: number }) {
     term.open(el)
     fit.fit()
 
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(
-      `${proto}://${location.host}/api/machines/${machineId}/terminal?cols=${term.cols}&rows=${term.rows}`,
-    )
-    ws.binaryType = 'arraybuffer'
-
     const enc = new TextEncoder()
+    let ws: WebSocket | null = null
     let open = false
+    let cancelled = false
 
-    ws.onopen = () => {
-      open = true
-      term.focus()
-    }
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(ev.data))
-      } else if (typeof ev.data === 'string') {
-        try {
-          const msg = JSON.parse(ev.data)
-          if (msg.type === 'error') term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m`)
-        } catch {
-          term.write(ev.data)
+    // Connect on the next tick, not synchronously. React StrictMode mounts,
+    // unmounts, and remounts effects in development; a socket created in the
+    // first mount completes its upgrade before close() lands and leaves a
+    // second SSH session (and a second audit row) behind. Deferring lets the
+    // throwaway mount's cleanup run first.
+    const connect = () => {
+      if (cancelled) return
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      const sock = new WebSocket(
+        `${proto}://${location.host}/api/machines/${machineId}/terminal?cols=${term.cols}&rows=${term.rows}`,
+      )
+      sock.binaryType = 'arraybuffer'
+      ws = sock
+
+      sock.onopen = () => {
+        open = true
+        term.focus()
+      }
+      sock.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(ev.data))
+        } else if (typeof ev.data === 'string') {
+          try {
+            const msg = JSON.parse(ev.data)
+            if (msg.type === 'error') term.writeln(`\r\n\x1b[31m${msg.message}\x1b[0m`)
+          } catch {
+            term.write(ev.data)
+          }
         }
       }
+      sock.onclose = (ev) => {
+        open = false
+        term.writeln(`\r\n\x1b[90m[connection closed${ev.reason ? ': ' + ev.reason : ''}]\x1b[0m`)
+      }
+      sock.onerror = () => term.writeln('\r\n\x1b[31m[websocket error]\x1b[0m')
     }
-    ws.onclose = (ev) => {
-      open = false
-      term.writeln(`\r\n\x1b[90m[connection closed${ev.reason ? ': ' + ev.reason : ''}]\x1b[0m`)
-    }
-    ws.onerror = () => term.writeln('\r\n\x1b[31m[websocket error]\x1b[0m')
+    const timer = setTimeout(connect, 0)
 
     const onData = term.onData((d) => {
-      if (open) ws.send(enc.encode(d))
+      if (open) ws?.send(enc.encode(d))
     })
     const onResize = term.onResize(({ cols, rows }) => {
-      if (open) ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+      if (open) ws?.send(JSON.stringify({ type: 'resize', cols, rows }))
     })
 
     const ro = new ResizeObserver(() => fit.fit())
     ro.observe(el)
 
     return () => {
+      cancelled = true
+      clearTimeout(timer)
       ro.disconnect()
       onData.dispose()
       onResize.dispose()
-      ws.close()
+      ws?.close()
       term.dispose()
     }
   }, [machineId])

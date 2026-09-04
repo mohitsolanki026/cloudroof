@@ -55,11 +55,21 @@ func run(args []string) error {
 	defer broker.Close()
 
 	opts := api.Options{
-		Store:   db,
-		Keyring: keys,
-		Broker:  broker,
-		Log:     log,
-		Static:  web.Dist(),
+		Store:        db,
+		Keyring:      keys,
+		Broker:       broker,
+		Log:          log,
+		Static:       web.Dist(),
+		AllowedHosts: cfg.Hosts,
+	}
+	if !cfg.BindsLoopback() && len(cfg.Hosts) == 0 {
+		// Reachable from the network with no Host allowlist. Accept any Host
+		// rather than lock the user out, but say so: this is the DNS-rebinding
+		// exposure -hosts exists to close.
+		opts.AllowAnyHost = true
+		log.Warn("listening on a non-loopback address with no -hosts allowlist; "+
+			"any Host header is accepted — set -hosts <name,ip> or put bosun behind a reverse proxy",
+			"addr", cfg.Addr)
 	}
 	if cfg.Dev {
 		opts.DevDist = "web/dist"
@@ -79,7 +89,9 @@ func run(args []string) error {
 		// unbounded. Individual handlers carry their own deadlines.
 	}
 
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -90,6 +102,10 @@ func run(args []string) error {
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// ListenAndServe returns as soon as Shutdown begins; wait for it to
+	// finish draining before the deferred broker/db Close pull the floor out
+	// from under in-flight handlers.
+	<-shutdownDone
 	log.Info("bosun stopped")
 	return nil
 }

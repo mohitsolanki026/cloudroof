@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -19,24 +18,8 @@ import (
 //   - text frames carry JSON control messages: {"type":"resize","cols":N,"rows":N}
 // The client is xterm.js; it neither needs nor wants anything smarter.
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
-	// Self-hosted and same-origin: accept only when the Origin host matches
-	// the Host we were reached on. Empty Origin (non-browser clients) is
-	// allowed.
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		u, err := url.Parse(origin)
-		if err != nil {
-			return false
-		}
-		return u.Host == r.Host
-	},
-}
+// The upgrader lives on the Server so its origin check shares the Host
+// allowlist with the REST guard; see server.go.
 
 type controlMsg struct {
 	Type string `json:"type"`
@@ -68,7 +51,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
 	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
 
-	ws, err := upgrader.Upgrade(w, r, nil)
+	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return // upgrader already wrote the response
 	}
@@ -87,7 +70,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 
 	// A terminal session is a Run too: it is the one place the user can do
 	// anything, so the audit log must at least record that it was opened.
-	_, _ = s.store.InsertRun(store.Run{
+	if _, err := s.store.InsertRun(store.Run{
 		MachineID:   &m.ID,
 		MachineName: m.Name,
 		ActionID:    "terminal.open",
@@ -95,7 +78,12 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		Danger:      actions.DangerDisruptive,
 		Actor:       actor,
 		StartedAt:   time.Now().UTC(),
-	})
+	}); err != nil {
+		// Same rule as engine.Run: an unrecorded session is worse than a
+		// refused one.
+		writeWSError(ws, "audit log write failed: "+err.Error())
+		return
+	}
 	_ = s.store.SetReach(m.ID, store.ReachOK, "")
 
 	// remote -> browser

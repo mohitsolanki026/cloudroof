@@ -85,6 +85,20 @@ web/src/pages/        Fleet, Machine (tabs), Activity, Settings.
   otherwise runs as the SSH user; `SudoNone` never prefixes. The `-n` flag is
   what guarantees no prompt. Never buffer a password into a PTY. The UI
   mirrors this in `canRun()` in `web/src/api.ts`.
+- **Every `/api` request passes `guard`** (`server.go`): the Host must be in
+  the allowlist (loopback + `-hosts`), `Origin` / `Sec-Fetch-Site` must be
+  same-origin when present, and a state-changing body must be
+  `application/json`. The websocket upgrader uses the same check. This is
+  the CSRF and DNS-rebinding defense standing in for auth until v2.5; do not
+  loosen it to make a client "just work" — add the host to `-hosts`.
+- **Every action executes via `sh -s`** with the rendered command on stdin
+  (`engine.Run`). The audit row and the UI preview show the rendered command
+  with its `sudo -n` prefix; `sh -s` is the transport. This is what makes the
+  remote login shell irrelevant and lets sudo cover a whole `a || b`.
+- **Nothing in the broker blocks without a deadline.** `NewSession`, `Start`,
+  `RequestPty`, `Shell` and keepalive replies go through `withDeadline`,
+  which drops the connection on expiry. Any new call into `*ssh.Client` or
+  `*ssh.Session` that can block needs the same wrapper.
 - **Migrations are append-only.** Edit `store/schema.go` by adding a new
   string to the slice. Never modify a shipped one.
 
@@ -102,8 +116,8 @@ user + credential) → probe.
 **Run a button** → UI checks `action.danger`; Tier 1/2 opens `Confirm` with
 the rendered command → `POST /api/machines/{id}/actions/{action}` with
 `confirm` / `confirmName` → `engine.Run`: gate → requires-check against facts
-→ render (regex + quote) → sudo prefix → `broker.Exec` → parse → `InsertRun`
-→ return `{run, data}`.
+→ render (regex + quote) → sudo decision → `broker.Exec("sh -s", stdin=command)`
+→ parse → `InsertRun` → return `{run, data}`.
 
 **Terminal** → `GET /api/machines/{id}/terminal` upgrades to WS → `OpenShell`
 (PTY on the pooled connection) → binary frames both ways, JSON `resize`.
@@ -149,17 +163,47 @@ Known gaps to be honest about:
 - `network.ports` needs `ss` (iproute2); no `netstat` fallback yet.
 - Reachability is refreshed on probe and on action failure, not on a timer.
   Power state *is* refreshed on a 2-minute timer via `StartBackground`.
-- No auth on the HTTP API. Bind to localhost or put it behind a reverse
-  proxy with auth. Multi-user auth is v2.5.
+- No auth on the HTTP API. The default bind is loopback and `guard` blocks
+  browser cross-site and rebinding attacks, but anyone who can reach the port
+  can drive it. Put it behind a reverse proxy with auth. Multi-user auth is
+  v2.5.
 - Schema migration 001 is still being edited in place because nothing has
   shipped; the append-only rule starts at the first tagged release.
+
+## Adversarial review (2026-09-04)
+
+Six reviewers (security, broker concurrency, store, handlers, parsers/facts,
+frontend) each produced findings; every finding was then attacked by three
+independent refuters and survived only on a majority. 29 survived and all
+were fixed the same day; six were refuted. The ones worth knowing because
+they shaped the code:
+
+- REST had no CSRF or rebinding defense and bound all interfaces → `guard`
+  and the loopback default.
+- `runAction` was recreated on every `load()` and its error path called
+  `load()` → tab effects could loop forever. It now reads the machine through
+  a ref and is stable per machine.
+- `sudo -n a || b` only covered `a` → every action runs under `sh -s`.
+- Read-tier actions that failed on the host rendered as empty tables → the
+  UI toasts exit code + first stderr line whenever the data looks empty.
+- `NewSession` and keepalive could block past every deadline on a half-open
+  transport → `withDeadline`.
+- `deleteCredential` closed every pooled connection → it drops only the
+  machines that used it. Deleting a cloud account left orphaned cloud columns
+  → stripped in the same transaction.
+- IPv6 SSH hosts were joined with `%s:%d` → `net.JoinHostPort`.
+- Confirm's window-level Enter fired Run while Cancel had focus → Enter lives
+  on the name input; Tier 1 relies on the focused button's own activation.
 
 ## Verified end-to-end — `make e2e` (2026-09-04)
 
 `scripts/e2e.sh` starts a throwaway unprivileged `sshd` on 127.0.0.1:2222
 (own host key, own client key, own config, touches nothing else) and drives
-the real binary through 45 checks: gate codes (428/400/409) and injection
-rejection before any host contact; probe pins a key equal to sshd's real
+the real binary through 50 checks: gate codes (428/400/409) and injection
+rejection before any host contact; the browser guard refuses a text/plain
+body (415), a foreign Origin and a cross-site Sec-Fetch-Site (403), and an
+unknown Host (421) while a same-origin Origin passes; probe pins a key equal
+to sshd's real
 fingerprint; the catalog offered matches the host's capabilities; overview /
 services.list / services.status / services.journal / processes.top /
 network.ports / disk.largest parse real output; `SudoPreferred` actions run

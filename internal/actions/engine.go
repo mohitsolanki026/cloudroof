@@ -101,9 +101,20 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 
-	command, err = applySudo(act.Sudo, facts.SudoMode, command)
+	// Every action runs inside `sh -s` with the rendered command on stdin —
+	// Script actions and single commands alike. That makes the remote login
+	// shell irrelevant (fish, zsh, a restricted shell), lets a sudo prefix
+	// cover a whole `a || b` chain rather than only its first word, and keeps
+	// quoting to the one place render() already handles. The audit log and
+	// the UI preview show the command itself; `sh -s` is the transport.
+	shell, err := applySudo(act.Sudo, facts.SudoMode, "sh -s")
 	if err != nil {
 		return Result{}, err
+	}
+	script := act.Script
+	if script == "" {
+		script = command + "\n"
+		command, _ = applySudo(act.Sudo, facts.SudoMode, command) // display and audit form
 	}
 
 	target, err := e.resolve(m)
@@ -111,10 +122,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	opts := sshx.ExecOpts{Timeout: act.Timeout}
-	if act.Script != "" {
-		opts.Stdin = strings.NewReader(act.Script)
-	}
+	opts := sshx.ExecOpts{Timeout: act.Timeout, Stdin: strings.NewReader(script)}
 
 	run := store.Run{
 		MachineID:   &m.ID,
@@ -126,7 +134,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 		StartedAt:   time.Now().UTC(),
 	}
 
-	res, execErr := e.broker.Exec(ctx, target, command, opts)
+	res, execErr := e.broker.Exec(ctx, target, shell, opts)
 	run.Stdout = res.Stdout
 	run.Stderr = res.Stderr
 	run.DurationMS = res.Duration.Milliseconds()

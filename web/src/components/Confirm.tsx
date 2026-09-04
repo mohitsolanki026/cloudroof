@@ -17,17 +17,20 @@ export function Confirm({ title, command, danger, machineName, busy, onConfirm, 
   const [typed, setTyped] = useState('')
   const ok = danger === 1 || typed === machineName
 
+  // Escape is global. Enter is deliberately not: the Run button is focused
+  // for Tier 1 so the browser's own activation handles it, and for Tier 2 the
+  // name input handles it below. A window-level Enter would fire Run while
+  // Cancel had focus.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
-      if (e.key === 'Enter' && ok && !busy) onConfirm()
+      if (e.key === 'Escape' && !busy) onCancel()
     }
     window.addEventListener('keydown', on)
     return () => window.removeEventListener('keydown', on)
-  }, [ok, busy, onCancel, onConfirm])
+  }, [busy, onCancel])
 
   return (
-    <div className="modal-bg" onClick={onCancel}>
+    <div className="modal-bg" onClick={busy ? undefined : onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="modal-head">
           <span className={'dot ' + (danger === 2 ? 'crit' : 'warn')} />
@@ -46,6 +49,9 @@ export function Confirm({ title, command, danger, machineName, busy, onConfirm, 
                 autoFocus
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && ok && !busy) onConfirm()
+                }}
                 placeholder={machineName}
                 spellCheck={false}
                 autoComplete="off"

@@ -52,17 +52,17 @@ type Disk struct {
 }
 
 type Overview struct {
-	Now            int64   `json:"now"`
-	UptimeSeconds  int64   `json:"uptimeSeconds"`
+	Now            int64     `json:"now"`
+	UptimeSeconds  int64     `json:"uptimeSeconds"`
 	Load           []float64 `json:"load"`
-	CPUs           int     `json:"cpus"`
-	MemTotal       int64   `json:"memTotal"` // bytes
-	MemUsed        int64   `json:"memUsed"`
-	SwapTotal      int64   `json:"swapTotal"`
-	SwapUsed       int64   `json:"swapUsed"`
-	Disks          []Disk  `json:"disks"`
-	Users          int     `json:"users"`
-	RebootRequired bool    `json:"rebootRequired"`
+	CPUs           int       `json:"cpus"`
+	MemTotal       int64     `json:"memTotal"` // bytes
+	MemUsed        int64     `json:"memUsed"`
+	SwapTotal      int64     `json:"swapTotal"`
+	SwapUsed       int64     `json:"swapUsed"`
+	Disks          []Disk    `json:"disks"`
+	Users          int       `json:"users"`
+	RebootRequired bool      `json:"rebootRequired"`
 }
 
 // pseudoFS are filesystems nobody wants on an overview card.
@@ -74,7 +74,7 @@ var pseudoFS = map[string]bool{
 
 func parseOverview(out string, _ int) any {
 	o := Overview{Load: []float64{}, Disks: []Disk{}}
-	var memAvail, swapFree int64
+	var memAvail, memFree, memBuffers, memCached, swapFree int64
 
 	for _, line := range strings.Split(out, "\n") {
 		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -98,6 +98,12 @@ func parseOverview(out string, _ int) any {
 			o.MemTotal = atoi64(v) * 1024
 		case "mem_avail_kb":
 			memAvail = atoi64(v) * 1024
+		case "mem_free_kb":
+			memFree = atoi64(v) * 1024
+		case "mem_buffers_kb":
+			memBuffers = atoi64(v) * 1024
+		case "mem_cached_kb":
+			memCached = atoi64(v) * 1024
 		case "swap_total_kb":
 			o.SwapTotal = atoi64(v) * 1024
 		case "swap_free_kb":
@@ -129,6 +135,11 @@ func parseOverview(out string, _ int) any {
 		}
 	}
 	if o.MemTotal > 0 {
+		if memAvail == 0 {
+			// Kernels before 3.14 have no MemAvailable; approximate the way
+			// `free` used to.
+			memAvail = memFree + memBuffers + memCached
+		}
 		o.MemUsed = o.MemTotal - memAvail
 	}
 	if o.SwapTotal > 0 {
@@ -197,6 +208,9 @@ func parsePS(out string, _ int) any {
 			Elapsed: atoi64(f[5]),
 			Command: strings.Join(f[6:], " "),
 		})
+		if len(procs) >= 60 {
+			break // ps already sorted by CPU; the UI shows the top 60
+		}
 	}
 	return map[string]any{"processes": procs}
 }
@@ -229,7 +243,9 @@ func parseSS(out string, _ int) any {
 			l.Port = int(atoi64(f[4][i+1:]))
 		}
 		if len(f) > 6 {
-			if m := reSSProc.FindStringSubmatch(f[6]); m != nil {
+			// A process name may contain spaces ("Web Content"), which splits
+			// the users:(...) column; match against the rest of the line.
+			if m := reSSProc.FindStringSubmatch(strings.Join(f[6:], " ")); m != nil {
 				l.Process = m[1]
 				l.PID = int(atoi64(m[2]))
 			}
