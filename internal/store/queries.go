@@ -324,14 +324,22 @@ type CloudInstance struct {
 // UpsertFromCloud reconciles one synced instance into the machines table.
 //
 // It is deliberately additive: on an existing row it refreshes only
-// cloud-derived columns and never touches ssh_*, credential_id, or the
-// user-chosen name. A sync must never undo the user's configuration.
-func (s *Store) UpsertFromCloud(accountID int64, provider string, in CloudInstance) (int64, bool, error) {
-	var id int64
-	err := s.db.QueryRow(
-		`SELECT id FROM machines WHERE cloud_account_id = ? AND instance_id = ?`,
+// cloud-derived columns and never touches credential_id or the user-chosen
+// name. The one exception is ssh_host, and only when it was auto-tracking the
+// public IP: an ephemeral cloud IP changes across a stop/start, and a machine
+// whose ssh_host still equals its previous public IP was clearly following
+// that IP, so it should keep following. A machine whose ssh_host was set to
+// anything else (a DNS name, a bastion, an Elastic IP the user typed) is left
+// untouched — that is user configuration, not a tracked address.
+//
+// The returned hostChanged is true when ssh_host was updated, so the caller
+// can drop the now-stale pooled connection and reset reachability.
+func (s *Store) UpsertFromCloud(accountID int64, provider string, in CloudInstance) (id int64, created, hostChanged bool, err error) {
+	var oldSSHHost, oldPublicIP string
+	err = s.db.QueryRow(
+		`SELECT id, ssh_host, public_ip FROM machines WHERE cloud_account_id = ? AND instance_id = ?`,
 		accountID, in.InstanceID,
-	).Scan(&id)
+	).Scan(&id, &oldSSHHost, &oldPublicIP)
 
 	now := ms(time.Now())
 
@@ -355,29 +363,35 @@ func (s *Store) UpsertFromCloud(accountID int64, provider string, in CloudInstan
 		}
 		t := time.Now().UTC()
 		m.CloudSyncedAt = &t
-		created, cerr := s.CreateMachine(m)
+		createdM, cerr := s.CreateMachine(m)
 		if cerr != nil {
-			return 0, false, cerr
+			return 0, false, false, cerr
 		}
-		return created.ID, true, nil
+		return createdM.ID, true, false, nil
 
 	case err != nil:
-		return 0, false, fmt.Errorf("store: lookup instance %s: %w", in.InstanceID, err)
+		return 0, false, false, fmt.Errorf("store: lookup instance %s: %w", in.InstanceID, err)
 
 	default:
+		// Follow the public IP only when ssh_host was tracking it.
+		newSSHHost := oldSSHHost
+		if oldSSHHost == oldPublicIP && in.PublicIP != "" && in.PublicIP != oldPublicIP {
+			newSSHHost = in.PublicIP
+			hostChanged = true
+		}
 		_, uerr := s.db.Exec(`
 			UPDATE machines SET
 				region = ?, instance_type = ?, power_state = ?,
-				public_ip = ?, private_ip = ?, cloud_synced_at = ?,
+				public_ip = ?, private_ip = ?, ssh_host = ?, cloud_synced_at = ?,
 				missing = 0, updated_at = ?
 			WHERE id = ?`,
 			in.Region, in.InstanceType, string(in.PowerState),
-			in.PublicIP, in.PrivateIP, now, now, id,
+			in.PublicIP, in.PrivateIP, newSSHHost, now, now, id,
 		)
 		if uerr != nil {
-			return 0, false, fmt.Errorf("store: refresh instance %s: %w", in.InstanceID, uerr)
+			return 0, false, false, fmt.Errorf("store: refresh instance %s: %w", in.InstanceID, uerr)
 		}
-		return id, false, nil
+		return id, false, hostChanged, nil
 	}
 }
 

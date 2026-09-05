@@ -76,16 +76,11 @@ var migrations = []string{
 		fetched_at   INTEGER NOT NULL
 	);
 
-	-- The pinned key, plus the last key observed that did NOT match it. The
-	-- seen_* pair is what the UI shows the user before they accept a change,
-	-- and what the trust endpoint requires them to echo back.
 	CREATE TABLE host_keys (
-		machine_id       INTEGER PRIMARY KEY REFERENCES machines(id) ON DELETE CASCADE,
-		algorithm        TEXT    NOT NULL,
-		fingerprint      TEXT    NOT NULL,
-		first_seen       INTEGER NOT NULL,
-		seen_algorithm   TEXT    NOT NULL DEFAULT '',
-		seen_fingerprint TEXT    NOT NULL DEFAULT ''
+		machine_id  INTEGER PRIMARY KEY REFERENCES machines(id) ON DELETE CASCADE,
+		algorithm   TEXT    NOT NULL,
+		fingerprint TEXT    NOT NULL,
+		first_seen  INTEGER NOT NULL
 	);
 
 	-- Audit log. machine_id is SET NULL rather than CASCADE and the name is
@@ -109,5 +104,15 @@ var migrations = []string{
 
 	CREATE INDEX idx_runs_started ON runs(started_at DESC);
 	CREATE INDEX idx_runs_machine ON runs(machine_id, started_at DESC);
+	`,
+
+	// 002 — record the last host key observed that did NOT match the pin, so
+	// the UI can show pinned vs. seen and the trust endpoint can require the
+	// user to echo the seen fingerprint back. (These columns were originally
+	// added by editing 001 in place, which never reached databases created
+	// before the edit; this migration is the correct, append-only fix.)
+	`
+	ALTER TABLE host_keys ADD COLUMN seen_algorithm   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE host_keys ADD COLUMN seen_fingerprint TEXT NOT NULL DEFAULT '';
 	`,
 }

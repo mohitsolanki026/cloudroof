@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,10 @@ var parsers = map[string]parser{
 	"ps":            parsePS,
 	"ss":            parseSS,
 	"du":            parseDU,
+	"supervisor":    parseSupervisor,
+	"docker_ps":     parseDockerPS,
+	"inodes":        parseInodes,
+	"tls":           parseTLS,
 }
 
 func parseRaw(out string, _ int) any { return map[string]any{"text": out} }
@@ -220,6 +225,7 @@ func parsePS(out string, _ int) any {
 type Listener struct {
 	Proto   string `json:"proto"`
 	Local   string `json:"local"`
+	Peer    string `json:"peer"`
 	Port    int    `json:"port"`
 	Process string `json:"process"`
 	PID     int    `json:"pid"`
@@ -228,31 +234,66 @@ type Listener struct {
 // users:(("nginx",pid=1234,fd=6),("nginx",pid=1235,fd=6))
 var reSSProc = regexp.MustCompile(`\("([^"]+)",pid=(\d+)`)
 
-// parseSS reads `ss -tulpnH`:
+// parseSS reads ss output, tolerating both column layouts we ask for:
 //
-//	tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1234,fd=6))
+//	ss -tulpnH:  tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1234,fd=6))
+//	ss -tnpH:    ESTAB 0 0 10.0.0.2:22 10.0.0.9:53410 users:(("sshd",pid=1234,fd=3))
+//
+// The listening form leads with a Netid (tcp/udp); the established form leads
+// with the State. Rather than index by position, pick the address fields
+// (host:port or host:*) in order — ss prints Local then Peer in both — and the
+// users:(...) field wherever it lands.
 func parseSS(out string, _ int) any {
 	ls := []Listener{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 5 {
+		if len(f) < 4 {
 			continue
 		}
-		l := Listener{Proto: f[0], Local: f[4]}
-		if i := strings.LastIndex(f[4], ":"); i >= 0 {
-			l.Port = int(atoi64(f[4][i+1:]))
-		}
-		if len(f) > 6 {
-			// A process name may contain spaces ("Web Content"), which splits
-			// the users:(...) column; match against the rest of the line.
-			if m := reSSProc.FindStringSubmatch(strings.Join(f[6:], " ")); m != nil {
-				l.Process = m[1]
-				l.PID = int(atoi64(m[2]))
+		var addrs []string
+		for _, tok := range f {
+			if looksAddr(tok) {
+				addrs = append(addrs, tok)
 			}
+		}
+		if len(addrs) == 0 {
+			continue
+		}
+		proto := "tcp"
+		if f[0] == "tcp" || f[0] == "udp" {
+			proto = f[0]
+		}
+		l := Listener{Proto: proto, Local: addrs[0]}
+		if len(addrs) > 1 {
+			l.Peer = addrs[1]
+		}
+		if i := strings.LastIndex(addrs[0], ":"); i >= 0 {
+			l.Port = int(atoi64(addrs[0][i+1:]))
+		}
+		// A process name may contain spaces ("Web Content"); match the whole line.
+		if m := reSSProc.FindStringSubmatch(line); m != nil {
+			l.Process = m[1]
+			l.PID = int(atoi64(m[2]))
 		}
 		ls = append(ls, l)
 	}
 	return map[string]any{"listeners": ls}
+}
+
+// looksAddr reports whether a field is a host:port / host:* address, so the
+// users:(...) and numeric queue columns are not mistaken for one. Handles the
+// IPv6 bracket form [::1]:22 via LastIndex.
+func looksAddr(s string) bool {
+	i := strings.LastIndex(s, ":")
+	if i < 0 {
+		return false
+	}
+	tail := s[i+1:]
+	if tail == "*" {
+		return true
+	}
+	_, err := strconv.Atoi(tail)
+	return err == nil
 }
 
 // --- du ---------------------------------------------------------------------
@@ -277,4 +318,146 @@ func parseDU(out string, _ int) any {
 func atoi64(s string) int64 {
 	n, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	return n
+}
+
+// --- supervisor -------------------------------------------------------------
+
+type Program struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+	Info  string `json:"info"`
+}
+
+// parseSupervisor reads `supervisorctl status`:
+//
+//	web       RUNNING   pid 1234, uptime 1:02:03
+//	worker    STOPPED   Jun 01 12:00 PM
+//	beat      FATAL     Exited too quickly (process log may have details)
+func parseSupervisor(out string, _ int) any {
+	progs := []Program{}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		progs = append(progs, Program{
+			Name:  f[0],
+			State: f[1],
+			Info:  strings.Join(f[2:], " "),
+		})
+	}
+	return map[string]any{"programs": progs}
+}
+
+// --- docker -----------------------------------------------------------------
+
+type Container struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	State  string `json:"state"`  // running | exited | created | paused …
+	Status string `json:"status"` // "Up 3 hours", "Exited (0) 2 days ago"
+	Ports  string `json:"ports"`
+	RunFor string `json:"runningFor"`
+}
+
+// parseDockerPS reads `docker ps -a --format '{{json .}}'` — one JSON object
+// per line. Field names are docker's PascalCase.
+func parseDockerPS(out string, _ int) any {
+	cs := []Container{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var d struct {
+			ID, Names, Image, State, Status, Ports, RunningFor string
+		}
+		if json.Unmarshal([]byte(line), &d) != nil {
+			continue
+		}
+		id := d.ID
+		if len(id) > 12 {
+			id = id[:12] // ps shows short IDs; commands accept them
+		}
+		cs = append(cs, Container{
+			ID: id, Name: d.Names, Image: d.Image,
+			State: d.State, Status: d.Status, Ports: d.Ports, RunFor: d.RunningFor,
+		})
+	}
+	return map[string]any{"containers": cs}
+}
+
+// --- inodes -----------------------------------------------------------------
+
+type Inode struct {
+	Source  string `json:"source"`
+	Mount   string `json:"mount"`
+	Total   int64  `json:"total"`
+	Used    int64  `json:"used"`
+	Free    int64  `json:"free"`
+	UsedPct int    `json:"usedPct"`
+}
+
+// parseInodes reads `df -Pi`: Filesystem Inodes IUsed IFree IUse% Mounted.
+// The -P (POSIX) format guarantees one line per filesystem.
+func parseInodes(out string, _ int) any {
+	rows := []Inode{}
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if i == 0 { // header
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 6 {
+			continue
+		}
+		src := f[0]
+		if pseudoFS[src] || strings.HasPrefix(src, "/dev/loop") {
+			continue
+		}
+		total := atoi64(f[1])
+		row := Inode{
+			Source: src, Mount: strings.Join(f[5:], " "),
+			Total: total, Used: atoi64(f[2]), Free: atoi64(f[3]),
+		}
+		if total > 0 {
+			row.UsedPct = int(row.Used * 100 / total)
+		}
+		rows = append(rows, row)
+	}
+	return map[string]any{"inodes": rows}
+}
+
+// --- tls --------------------------------------------------------------------
+
+// parseTLS reads the subject/issuer/dates that `openssl x509` prints:
+//
+//	subject=CN = example.com
+//	issuer=C = US, O = Let's Encrypt, CN = R3
+//	notBefore=Jun  1 00:00:00 2026 GMT
+//	notAfter=Aug 30 23:59:59 2026 GMT
+func parseTLS(out string, _ int) any {
+	m := map[string]any{"subject": "", "issuer": "", "notBefore": "", "notAfter": "", "ok": false}
+	for _, line := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch k {
+		case "subject":
+			m["subject"] = v
+		case "issuer":
+			m["issuer"] = v
+		case "notBefore":
+			m["notBefore"] = v
+		case "notAfter":
+			m["notAfter"] = v
+		}
+	}
+	// A cert was returned only if we got an end date; otherwise the handshake
+	// failed and the UI should say so rather than show blanks.
+	m["ok"] = m["notAfter"] != ""
+	return m
 }

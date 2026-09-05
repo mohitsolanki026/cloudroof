@@ -7,14 +7,19 @@ the commands you keep re-typing through SSH.
 Nothing is installed on your machines. No credential leaves your box.
 
 ```
-docker run -d -p 7070:7070 -v bosun:/data bosun
+curl -sSL https://get.bosun.sh | sh && bosun
 ```
 
-or
+or with Docker:
 
 ```
-make web && make build
-./bin/bosun -data ./data
+docker run -d -p 127.0.0.1:7070:7070 -v bosun:/data ghcr.io/bosun-sh/bosun
+```
+
+or from source:
+
+```
+make web && make build && ./bin/bosun
 ```
 
 then open http://localhost:7070.
@@ -24,61 +29,81 @@ then open http://localhost:7070.
 - **Fleet view** — every machine across every provider in one list, with two
   status dots: what the cloud says (running / stopped) and what SSH saw
   (reachable / refused / timeout / auth failed). Their disagreement is the
-  signal.
+  signal. Reachability refreshes on its own, so the dots stay honest.
 - **Power** — start, shut down, reboot, force-stop, force-reboot via the
   provider API. For when SSH is dead.
 - **Overview** — uptime, load, memory, filesystems, sessions, reboot-required.
   One batched probe per refresh.
-- **Services** — systemd units with start / stop / restart / journal per row.
+- **Services** — systemd units with start / stop / restart, a journal
+  snapshot, and a live `journalctl -f` follow.
+- **Programs** — supervisor programs with start / stop / restart and a live
+  `tail -f`.
 - **Processes** — top by CPU with TERM / KILL.
-- **Network** — listening ports mapped to owning process.
-- **Disk** — largest directories, journal vacuum.
+- **Containers** — Docker containers with start / stop / restart, live
+  `docker logs -f`, disk usage, and prune.
+- **Network** — listening ports and established connections mapped to the
+  owning process, plus a reach-a-URL probe run from the host.
+- **Web** — nginx config test and gated reload, and a TLS certificate expiry
+  check for any host:port.
+- **Disk** — largest directories, inode usage, journal vacuum, apt cache clean.
 - **Terminal** — a real shell on the pooled SSH connection.
 - **Activity** — every command Bosun has ever run, with output, append-only.
+
+Tabs are drawn from what each host actually has: a box without Docker never
+shows a Containers tab, one without systemd never shows Services.
+
+## Providers
+
+Hetzner Cloud, DigitalOcean, and AWS EC2. Each needs only read + power
+permissions; the account form tells you exactly which. AWS scans the regions
+you name, or every region on the account if you name none.
+
+Machines that are not on a supported provider (bare metal, a Pi, a provider we
+don't speak yet) work fine — add them by SSH and you get everything except
+power control.
 
 ## Safety
 
 Every action carries a tier. Tier 0 runs on click. Tier 1 asks once. Tier 2
-makes you type the machine's name. Tier 3 — `rm -rf`, `mkfs`, terminate —
-does not exist as a button and never will.
+makes you type the machine's name. Tier 3 — `rm -rf`, `mkfs`, terminate — does
+not exist as a button and never will.
 
-Every button shows the exact command before it runs and logs it after.
+Every button shows the exact command before it runs and logs it after. Actions
+that need root use passwordless `sudo -n` where the host allows it and are
+disabled, never left to hang on a prompt, where it doesn't.
 
 ## Network exposure
 
 There is no login yet. Bosun therefore binds to `127.0.0.1:7070` by default,
-refuses requests whose `Host` header is not itself (DNS rebinding), and
-refuses cross-origin browser requests (CSRF). To reach it from another
-machine, opt in explicitly and name the hosts you will use:
+refuses requests whose `Host` header is not itself (DNS rebinding), and refuses
+cross-origin browser requests (CSRF). To reach it from another machine, opt in
+explicitly and name the hosts you will use:
 
 ```
-./bin/bosun -addr 0.0.0.0:7070 -hosts bosun.lan,10.0.0.5
-docker run -d -p 7070:7070 -e BOSUN_HOSTS=bosun.lan -v bosun:/data bosun
+bosun -addr 0.0.0.0:7070 -hosts bosun.lan,10.0.0.5
+docker run -d -p 7070:7070 -e BOSUN_HOSTS=bosun.lan -v bosun:/data ghcr.io/bosun-sh/bosun
 ```
 
 Binding a network address without `-hosts` works but accepts any `Host` and
 logs a warning at startup. Put Bosun behind a reverse proxy that adds
-authentication and TLS before exposing it beyond a trusted network.
-Multi-user auth is on the roadmap (v2.5).
-
-## Providers
-
-v0.1: Hetzner Cloud. DigitalOcean and AWS EC2 are next.
-
-Machines that are not on a supported provider (bare metal, a Pi, a provider
-we don't speak yet) work fine — add them by SSH and you get everything except
-power control.
+authentication and TLS before exposing it beyond a trusted network. Multi-user
+auth is on the roadmap.
 
 ## Development
 
 ```
 make dev              # Go backend on :7070, serving web/dist from disk
 cd web && npm run dev # Vite on :5173 with /api proxied to :7070
-make test
+make test             # go vet + unit tests (parsers, catalog, keyring)
+make e2e              # full stack against a throwaway local sshd
+make release          # cross-compiled tarballs + checksums in dist/
 ```
 
 See `.agents/README.md` for the architecture brief and invariants.
 
 ## Status
 
-v0.1 — proof slice. Not yet suitable for anything you'd be sad to lose.
+v1.0. Three providers, the systemd / supervisor / docker / nginx catalog, live
+log streaming, self-refreshing reachability, single admin user, one-command
+install. No metrics history, no bulk actions, no groups yet — those are the
+next milestone.

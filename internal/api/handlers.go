@@ -617,9 +617,9 @@ func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 // --- cloud accounts ---------------------------------------------------------
 
 type accountInput struct {
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Token    string `json:"token"`
+	Name        string               `json:"name"`
+	Provider    string               `json:"provider"`
+	Credentials provider.Credentials `json:"credentials"`
 }
 
 func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
@@ -637,25 +637,40 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err.Error())
 		return
 	}
-	if strings.TrimSpace(in.Name) == "" || in.Token == "" {
-		badRequest(w, "name and token are required")
+	if strings.TrimSpace(in.Name) == "" {
+		badRequest(w, "name is required")
 		return
 	}
-	// Validate the token by constructing the provider and making one cheap
-	// call, so a typo is caught here rather than on the first sync.
-	p, err := provider.New(in.Provider, in.Token)
+	spec, ok := provider.Lookup(in.Provider)
+	if !ok {
+		badRequest(w, "unknown provider "+strconv.Quote(in.Provider))
+		return
+	}
+	if err := spec.Validate(in.Credentials); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	// Validate the credentials by constructing the provider and making one
+	// real call, so a typo is caught here rather than on the first sync.
+	p, err := provider.New(in.Provider, in.Credentials)
 	if err != nil {
 		badRequest(w, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	// Generous: AWS with region discovery makes one call per region.
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	if _, err := p.ListInstances(ctx); err != nil {
-		writeJSON(w, 502, apiError{Error: "provider rejected the token: " + err.Error(), Code: "provider_error"})
+		writeJSON(w, 502, apiError{Error: "provider rejected the credentials: " + err.Error(), Code: "provider_error"})
 		return
 	}
 
-	sealed, err := s.keys.Seal([]byte(in.Token))
+	plain, err := json.Marshal(in.Credentials)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	sealed, err := s.keys.Seal(plain)
 	if err != nil {
 		fail(w, err)
 		return
@@ -726,5 +741,5 @@ func (s *Server) catalog(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) providers(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, provider.Names())
+	writeJSON(w, 200, provider.Specs())
 }

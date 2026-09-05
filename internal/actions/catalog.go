@@ -64,6 +64,10 @@ type Action struct {
 	Timeout time.Duration `json:"-"`
 	// Parse names a parser in parsers.go; "" means raw text.
 	Parse string `json:"parse"`
+	// Stream marks a follow action (journalctl -f, docker logs -f). It runs
+	// over a websocket via the stream endpoint, not the buffered exec path,
+	// and is always Tier 0. The UI opens a live log viewer for it.
+	Stream bool `json:"stream,omitempty"`
 	// Script, when set, is fed to `sh -s` over stdin instead of running
 	// Command. Used for multi-line probes where quoting would be miserable.
 	Script string `json:"-"`
@@ -77,6 +81,14 @@ var (
 	rePID  = regexp.MustCompile(`^[0-9]{1,10}$`)
 	reInt  = regexp.MustCompile(`^[0-9]{1,6}$`)
 	rePath = regexp.MustCompile(`^/[A-Za-z0-9._/-]{0,255}$`)
+	// A supervisor program or a docker container name/id: starts alphanumeric,
+	// then a tight set. Never begins with '-', so it can't become an option.
+	reName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._:/-]{0,127}$`)
+	// A DNS host or IP for the TLS check.
+	reHost = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$`)
+	// An http(s) URL for the reachability probe. Single-quoted at render, so
+	// this only has to keep the value sane, not shell-safe.
+	reURL = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]{1,1000}$`)
 )
 
 // overviewScript is the batched probe behind the Overview tab. One round-trip,
@@ -123,6 +135,13 @@ var Catalog = []Action{
 		Command:  "journalctl -u {{unit}} -n 200 --no-pager -o short-iso",
 		Params:   []Param{{Name: "unit", Label: "Unit", Pattern: reUnit, Source: "services.list"}},
 		Parse:    "lines", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		ID: "services.journal_follow", Label: "Follow journal", Category: "services",
+		Requires: []string{"journalctl"},
+		Command:  "journalctl -u {{unit}} -n 200 -f -o short-iso",
+		Params:   []Param{{Name: "unit", Label: "Unit", Pattern: reUnit, Source: "services.list"}},
+		Danger:   DangerRead, Sudo: SudoPreferred, Stream: true,
 	},
 	{
 		ID: "services.start", Label: "Start", Category: "services",
@@ -188,6 +207,19 @@ var Catalog = []Action{
 		Command:  "ss -tulpnH",
 		Parse:    "ss", Danger: DangerRead, Sudo: SudoPreferred,
 	},
+	{
+		ID: "network.established", Label: "Established connections", Category: "network",
+		Requires: []string{"ss"},
+		Command:  "ss -tnpH state established",
+		Parse:    "ss", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		ID: "network.reach", Label: "Reach a URL", Category: "network",
+		Requires: []string{"curl"},
+		Command:  "curl -sS -o /dev/null --max-time 10 -w 'status=%{http_code}\\ntime=%{time_total}s\\nsize=%{size_download}\\nremote=%{remote_ip}:%{remote_port}\\n' {{url}}",
+		Params:   []Param{{Name: "url", Label: "URL", Pattern: reURL}},
+		Parse:    "raw", Danger: DangerRead, Timeout: 15 * time.Second,
+	},
 
 	// --- disk -------------------------------------------------------------
 	{
@@ -200,10 +232,141 @@ var Catalog = []Action{
 		Timeout: 120 * time.Second,
 	},
 	{
+		ID: "disk.inodes", Label: "Inode usage", Category: "disk",
+		Command: "df -Pi",
+		Parse:   "inodes", Danger: DangerRead,
+	},
+	{
+		ID: "disk.clean_apt", Label: "Clean apt cache", Category: "disk",
+		Requires: []string{"apt-get"},
+		Command:  "apt-get clean && echo cleaned",
+		Parse:    "raw", Danger: DangerReversible, Sudo: SudoRequired,
+	},
+	{
 		ID: "disk.vacuum_journal", Label: "Vacuum journal (keep 7d)", Category: "disk",
 		Requires: []string{"journalctl"},
 		Command:  "journalctl --vacuum-time=7d",
 		Parse:    "raw", Danger: DangerReversible, Sudo: SudoRequired,
+	},
+
+	// --- programs (supervisor) --------------------------------------------
+	{
+		ID: "programs.list", Label: "List programs", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl status",
+		Parse:    "supervisor", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		ID: "programs.start", Label: "Start", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl start {{prog}}",
+		Params:   []Param{{Name: "prog", Label: "Program", Pattern: reName, Source: "programs.list"}},
+		Parse:    "raw", Danger: DangerReversible, Sudo: SudoPreferred,
+	},
+	{
+		ID: "programs.stop", Label: "Stop", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl stop {{prog}}",
+		Params:   []Param{{Name: "prog", Label: "Program", Pattern: reName, Source: "programs.list"}},
+		Parse:    "raw", Danger: DangerReversible, Sudo: SudoPreferred,
+	},
+	{
+		ID: "programs.restart", Label: "Restart", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl restart {{prog}}",
+		Params:   []Param{{Name: "prog", Label: "Program", Pattern: reName, Source: "programs.list"}},
+		Parse:    "raw", Danger: DangerReversible, Sudo: SudoPreferred,
+	},
+	{
+		ID: "programs.update", Label: "Reread & update", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl update",
+		Parse:    "raw", Danger: DangerReversible, Sudo: SudoPreferred,
+	},
+	{
+		ID: "programs.tail", Label: "Follow output", Category: "programs",
+		Requires: []string{"supervisorctl"},
+		Command:  "supervisorctl tail -f {{prog}}",
+		Params:   []Param{{Name: "prog", Label: "Program", Pattern: reName, Source: "programs.list"}},
+		Danger:   DangerRead, Sudo: SudoPreferred, Stream: true,
+	},
+
+	// --- containers (docker) ----------------------------------------------
+	{
+		ID: "containers.list", Label: "List containers", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker ps -a --no-trunc --format '{{json .}}'",
+		Parse:    "docker_ps", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		ID: "containers.start", Label: "Start", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker start {{id}}",
+		Params:   []Param{{Name: "id", Label: "Container", Pattern: reName, Source: "containers.list"}},
+		Parse:    "exit", Danger: DangerReversible, Sudo: SudoPreferred,
+	},
+	{
+		ID: "containers.stop", Label: "Stop", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker stop {{id}}",
+		Params:   []Param{{Name: "id", Label: "Container", Pattern: reName, Source: "containers.list"}},
+		Parse:    "exit", Danger: DangerReversible, Sudo: SudoPreferred,
+		Timeout: 30 * time.Second,
+	},
+	{
+		ID: "containers.restart", Label: "Restart", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker restart {{id}}",
+		Params:   []Param{{Name: "id", Label: "Container", Pattern: reName, Source: "containers.list"}},
+		Parse:    "exit", Danger: DangerReversible, Sudo: SudoPreferred,
+		Timeout: 30 * time.Second,
+	},
+	{
+		ID: "containers.logs", Label: "Follow logs", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker logs --tail 200 -f {{id}}",
+		Params:   []Param{{Name: "id", Label: "Container", Pattern: reName, Source: "containers.list"}},
+		Danger:   DangerRead, Sudo: SudoPreferred, Stream: true,
+	},
+	{
+		ID: "containers.df", Label: "Disk usage", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker system df",
+		Parse:    "raw", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		ID: "containers.prune", Label: "Prune unused", Category: "containers",
+		Requires: []string{"docker"},
+		Command:  "docker system prune -af",
+		Parse:    "raw", Danger: DangerDisruptive, Sudo: SudoPreferred,
+		Timeout: 120 * time.Second,
+	},
+
+	// --- web (nginx / TLS) ------------------------------------------------
+	{
+		ID: "web.nginx_test", Label: "Test nginx config", Category: "web",
+		Requires: []string{"nginx"},
+		Command:  "nginx -t",
+		Parse:    "raw", Danger: DangerRead, Sudo: SudoPreferred,
+	},
+	{
+		// Reload, never restart: a reload keeps connections and re-reads
+		// config, so a broken config fails the reload instead of taking the
+		// server down. The UI gates this behind a passing test.
+		ID: "web.nginx_reload", Label: "Reload nginx", Category: "web",
+		Requires: []string{"nginx"},
+		Command:  "nginx -s reload",
+		Parse:    "exit", Danger: DangerReversible, Sudo: SudoRequired,
+	},
+	{
+		ID: "web.tls_cert", Label: "Check TLS certificate", Category: "web",
+		Requires: []string{"openssl"},
+		Command:  "echo | openssl s_client -connect {{host}}:{{port}} -servername {{host}} 2>/dev/null | openssl x509 -noout -subject -issuer -startdate -enddate",
+		Params: []Param{
+			{Name: "host", Label: "Host", Pattern: reHost},
+			{Name: "port", Label: "Port", Pattern: reInt},
+		},
+		Parse: "tls", Danger: DangerRead, Timeout: 20 * time.Second,
 	},
 
 	// --- host -------------------------------------------------------------

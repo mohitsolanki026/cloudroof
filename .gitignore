@@ -16,3 +16,4 @@ master.key
 *.swp
 .idea/
 .vscode/
+/dist/

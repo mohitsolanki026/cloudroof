@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"bosun/internal/provider"
+	"bosun/internal/store"
 )
 
 type syncResult struct {
@@ -20,11 +23,16 @@ func (s *Server) providerFor(accountID int64) (provider.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := s.keys.OpenSealed(a.SealedToken)
+	plain, err := s.keys.OpenSealed(a.SealedToken)
 	if err != nil {
 		return nil, err
 	}
-	return provider.New(a.Provider, string(token))
+	var c provider.Credentials
+	if json.Unmarshal(plain, &c) != nil || c.Empty() {
+		// v0.1 sealed the bare token string rather than a JSON object.
+		c = provider.Credentials{Token: strings.TrimSpace(string(plain))}
+	}
+	return provider.New(a.Provider, c)
 }
 
 // sync pulls every instance from one account into the fleet. It is additive:
@@ -52,7 +60,7 @@ func (s *Server) sync(ctx context.Context, accountID int64) (syncResult, error) 
 	var res syncResult
 	seen := make([]string, 0, len(instances))
 	for _, in := range instances {
-		_, created, err := s.store.UpsertFromCloud(accountID, a.Provider, in)
+		id, created, hostChanged, err := s.store.UpsertFromCloud(accountID, a.Provider, in)
 		if err != nil {
 			_ = s.store.SetSyncResult(accountID, time.Now(), err.Error())
 			return res, err
@@ -61,6 +69,16 @@ func (s *Server) sync(ctx context.Context, accountID int64) (syncResult, error) 
 			res.Created++
 		} else {
 			res.Updated++
+		}
+		if hostChanged {
+			// The instance's public IP moved (a stop/start on an ephemeral
+			// address) and ssh_host followed it. The pooled connection points
+			// at the old IP; drop it so the next action redials, and reset
+			// reachability so the fleet reflects "unknown until re-probed"
+			// rather than a stale "ok".
+			s.broker.Drop(id)
+			_ = s.store.SetReach(id, store.ReachUnknown, "")
+			s.log.Info("machine public IP changed; ssh_host followed", "machine", id, "ip", in.PublicIP)
 		}
 		seen = append(seen, in.InstanceID)
 	}

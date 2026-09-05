@@ -22,14 +22,18 @@ import (
 const Name = "hetzner"
 
 func init() {
-	provider.Register(Name, func(token string) (provider.Provider, error) {
-		if token == "" {
-			return nil, fmt.Errorf("hetzner: empty API token")
-		}
+	provider.Register(provider.Spec{
+		Name:  Name,
+		Label: "Hetzner Cloud",
+		Fields: []provider.Field{
+			{Name: "token", Label: "API token", Kind: provider.FieldSecret},
+		},
+		Notes: "Cloud Console → project → Security → API tokens. Read & Write is needed for power control; Read is enough for inventory only.",
+	}, func(c provider.Credentials) (provider.Provider, error) {
 		return &Hetzner{
 			client: hcloud.NewClient(
-				hcloud.WithToken(token),
-				hcloud.WithApplication("bosun", "0.1"),
+				hcloud.WithToken(c.Token),
+				hcloud.WithApplication("bosun", "1.0"),
 				// Callers pass contexts, but a client-level ceiling guards
 				// the one path (hcloud's own retries) that outlives them.
 				hcloud.WithHTTPClient(&http.Client{Timeout: 45 * time.Second}),

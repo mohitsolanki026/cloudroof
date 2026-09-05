@@ -21,10 +21,20 @@ import (
 	"bosun/web"
 
 	// Provider adapters register themselves on import.
+	_ "bosun/internal/provider/amazon"
+	_ "bosun/internal/provider/digitalocean"
 	_ "bosun/internal/provider/hetzner"
 )
 
+var version = "dev"
+
 func main() {
+	for _, a := range os.Args[1:] {
+		if a == "-version" || a == "--version" {
+			fmt.Println("bosun", version)
+			return
+		}
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "bosun:", err)
 		os.Exit(1)
@@ -80,6 +90,7 @@ func run(args []string) error {
 	defer stop()
 
 	srv.StartBackground(ctx, 2*time.Minute)
+	srv.StartReachPoller(ctx)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -98,7 +109,7 @@ func run(args []string) error {
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Info("bosun listening", "addr", cfg.Addr, "data", cfg.DataDir, "dev", cfg.Dev)
+	log.Info("bosun listening", "version", version, "addr", cfg.Addr, "data", cfg.DataDir, "dev", cfg.Dev)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

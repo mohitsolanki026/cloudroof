@@ -203,6 +203,29 @@ st, r = call("POST", f"/api/machines/{mid}/actions/services.restart", {"params":
 if can_root: check("services.restart (required) executes with sudo", st == 200 and r["run"]["exitCode"] != 0)
 else: check("services.restart (required) refused without sudo", st == 409 and r["code"] == "not_available")
 
+print("-- v1 catalog: providers, new actions --")
+st, specs = call("GET", "/api/providers")
+names = {s["name"] for s in specs}
+check("three providers registered", names == {"hetzner", "digitalocean", "aws"}, str(sorted(names)))
+check("aws spec declares key-pair fields", any(s["name"] == "aws" and {f["name"] for f in s["fields"]} >= {"accessKeyId", "secretAccessKey"} for s in specs))
+if "docker" in f["capabilities"]:
+    check("docker host exposes containers.list", "containers.list" in ids)
+if "supervisorctl" not in f["capabilities"]:
+    check("no supervisor -> programs.* hidden", "programs.list" not in ids)
+check("openssl -> web.tls_cert offered" if "openssl" in f["capabilities"] else "no openssl -> tls hidden",
+      ("web.tls_cert" in ids) == ("openssl" in f["capabilities"]))
+
+st, r = call("POST", f"/api/machines/{mid}/actions/network.established")
+check("network.established parsed", st == 200 and isinstance(r["data"]["listeners"], list))
+st, r = call("POST", f"/api/machines/{mid}/actions/disk.inodes")
+check("disk.inodes parsed", st == 200 and len(r["data"]["inodes"]) >= 1 and r["data"]["inodes"][0]["total"] > 0)
+st, r = call("POST", f"/api/machines/{mid}/actions/network.reach", {"params": {"url": f"http://127.0.0.1:{API_PORT}/api/health"}, "confirm": False, "confirmName": ""})
+check("network.reach hits bosun's own health from the host", st == 200 and "status=200" in r["data"]["text"])
+st, r = call("POST", f"/api/machines/{mid}/actions/web.tls_cert", {"params": {"host": "127.0.0.1", "port": str(SSH_PORT)}, "confirm": False, "confirmName": ""})
+check("tls check on a non-TLS port reports ok=false, not blanks", st == 200 and r["data"]["ok"] is False)
+st, r = call("POST", f"/api/machines/{mid}/actions/network.reach", {"params": {"url": "ftp://nope"}, "confirm": False, "confirmName": ""})
+check("bad URL scheme rejected by pattern -> 400", st == 400)
+
 print("-- audit --")
 st, runs = call("GET", f"/api/runs?machine={mid}")
 check("every executed action audited", len(runs) >= 6, f"{len(runs)} rows")
@@ -249,6 +272,33 @@ node "$D/term.mjs"
 curl -s "$B/api/runs?machine=$MID" | python3 -c '
 import json,sys; ok = any(r["actionId"]=="terminal.open" for r in json.load(sys.stdin))
 print(("  ok   " if ok else "  FAIL ") + "terminal open audited"); sys.exit(0 if ok else 1)'
+
+echo "-- streaming (journal follow over websocket) --"
+UNIT=$(curl -s -X POST "$B/api/machines/$MID/actions/services.list" | python3 -c '
+import json,sys
+u=json.load(sys.stdin)["data"]["units"]
+# a unit likely to have journal output; fall back to the first one
+pick=next((x["name"] for x in u if x["name"] in ("systemd-journald.service","systemd-logind.service")), u[0]["name"] if u else "systemd-journald.service")
+print(pick)')
+cat > "$D/stream.mjs" <<EOF
+const ws = new WebSocket("ws://127.0.0.1:$API_PORT/api/machines/$MID/actions/services.journal_follow/stream?unit=" + encodeURIComponent("$UNIT"));
+let opened = false, frames = 0;
+ws.onopen = () => { opened = true; };
+ws.onmessage = (e) => { if (typeof e.data === "string") { frames++; if (frames >= 1) setTimeout(() => ws.close(), 400); } };
+ws.onclose = () => {
+  console.log((opened ? "  ok   " : "  FAIL ") + "journal-follow websocket connected");
+  console.log((frames > 0 ? "  ok   " : "  note ") + "journal-follow delivered " + frames + " line(s)");
+  process.exit(opened ? 0 : 1);
+};
+ws.onerror = () => {};
+setTimeout(() => { if (!opened) { console.log("  FAIL journal-follow did not connect"); process.exit(1); } else { console.log("  ok   journal-follow connected (" + frames + " line(s))"); process.exit(0); } }, 5000);
+// Hard backstop: never hang the suite even if onclose is missed.
+setTimeout(() => { console.log("  FAIL journal-follow hard timeout"); process.exit(1); }, 9000);
+EOF
+timeout 20 node "$D/stream.mjs"
+curl -s "$B/api/runs?machine=$MID" | python3 -c '
+import json,sys; ok = any(r["actionId"]=="services.journal_follow" for r in json.load(sys.stdin))
+print(("  ok   " if ok else "  FAIL ") + "stream open audited"); sys.exit(0 if ok else 1)'
 
 # ---------------------------------------------------------------------------
 # Phase 3: host key change — the machine is "rebuilt" (new host key). Bosun

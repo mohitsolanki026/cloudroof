@@ -52,7 +52,7 @@ else
 fi
 
 for c in systemctl journalctl supervisorctl docker podman nginx caddy apache2 \
-         apt-get dnf yum apk pacman ss netstat curl wget jq; do
+         apt-get dnf yum apk pacman ss netstat curl wget jq openssl; do
   command -v "$c" >/dev/null 2>&1 && echo "cap=$c"
 done
 `

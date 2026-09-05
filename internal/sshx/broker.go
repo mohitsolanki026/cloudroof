@@ -559,3 +559,69 @@ func (s *Shell) Wait() error { return s.sess.Wait() }
 
 // Close tears the session down.
 func (s *Shell) Close() error { return s.sess.Close() }
+
+// --- stream -----------------------------------------------------------------
+
+// Stream is a long-lived command whose combined stdout+stderr is piped to the
+// caller until the caller closes it or the command exits. It backs follow
+// actions (journalctl -f, docker logs -f). Unlike Exec it imposes no command
+// timeout — following is the point — only a bounded setup.
+type Stream struct {
+	sess   *ssh.Session
+	Output io.Reader
+}
+
+// OpenStream starts command on a new session and returns its merged output.
+// stdin, if non-nil, is written and closed (used to feed `sh -s`).
+func (b *Broker) OpenStream(ctx context.Context, t Target, command string, stdin io.Reader) (*Stream, error) {
+	setupCtx, cancel := context.WithTimeout(ctx, shellSetup)
+	defer cancel()
+
+	client, err := b.Get(setupCtx, t)
+	if err != nil {
+		return nil, err
+	}
+	var sess *ssh.Session
+	if err := b.withDeadline(setupCtx, t.ID, func() error {
+		var e error
+		sess, e = client.NewSession()
+		return e
+	}); err != nil {
+		b.Drop(t.ID)
+		return nil, fmt.Errorf("ssh: open session: %w", err)
+	}
+
+	// One pipe carries both streams, in interleaved order, the way a terminal
+	// would show them. docker logs writes to both; journalctl to stdout only.
+	pr, pw := io.Pipe()
+	sess.Stdout = pw
+	sess.Stderr = pw
+
+	if stdin != nil {
+		wc, err := sess.StdinPipe()
+		if err != nil {
+			sess.Close()
+			return nil, fmt.Errorf("ssh: stdin pipe: %w", err)
+		}
+		go func() {
+			io.Copy(wc, stdin)
+			wc.Close()
+		}()
+	}
+
+	if err := b.withDeadline(setupCtx, t.ID, func() error { return sess.Start(command) }); err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("ssh: start: %w", err)
+	}
+
+	// When the remote command ends, close the pipe so the reader sees EOF.
+	go func() {
+		_ = sess.Wait()
+		pw.Close()
+	}()
+
+	return &Stream{sess: sess, Output: pr}, nil
+}
+
+// Close tears the session down; the reader then sees EOF.
+func (s *Stream) Close() error { return s.sess.Close() }

@@ -1,7 +1,8 @@
-.PHONY: all web build run dev test clean docker
+.PHONY: all web build run dev test e2e release clean docker
 
 BIN     := bin/bosun
-VERSION ?= 0.1.0-dev
+VERSION ?= 1.0.0
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 all: web build
 
@@ -11,7 +12,7 @@ web:
 
 # Single static binary. CGO is off because the SQLite driver is pure Go.
 build:
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BIN) ./cmd/bosun
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/bosun
 
 run: build
 	$(BIN) -data ./data
@@ -29,8 +30,24 @@ test:
 e2e:
 	bash scripts/e2e.sh
 
+# Cross-compiled release tarballs + checksums in dist/. The frontend is built
+# once and embedded into every binary; pure-Go (CGO off) makes this trivial.
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+release: web
+	@rm -rf dist && mkdir -p dist
+	@for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; \
+		echo "  building $$os/$$arch"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+			go build -trimpath -ldflags "$(LDFLAGS)" -o dist/bosun ./cmd/bosun; \
+		tar -C dist -czf dist/bosun_$(VERSION)_$${os}_$${arch}.tar.gz bosun; \
+		rm -f dist/bosun; \
+	done
+	@cd dist && sha256sum *.tar.gz > checksums.txt
+	@echo "release $(VERSION):" && ls -1 dist
+
 clean:
-	rm -rf bin web/dist/* data
+	rm -rf bin dist web/dist/* data
 	touch web/dist/.gitkeep
 
 docker:

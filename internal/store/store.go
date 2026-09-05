@@ -8,6 +8,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: keeps the binary static and cross-compilable
@@ -76,7 +77,7 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return fmt.Errorf("store: begin migration %d: %w", version, err)
 		}
-		if _, err := tx.Exec(stmt); err != nil {
+		if err := execMigration(tx, stmt); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("store: apply migration %d: %w", version, err)
 		}
@@ -89,6 +90,27 @@ func (s *Store) migrate() error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: commit migration %d: %w", version, err)
+		}
+	}
+	return nil
+}
+
+// execMigration runs a migration one statement at a time and tolerates a
+// column that already exists. That case arises only from history: the seen_*
+// columns on host_keys were briefly added by editing migration 001 in place,
+// so a database created in that window already has them when migration 002
+// tries to add them. "duplicate column name" there is success, not failure.
+func execMigration(tx *sql.Tx, stmt string) error {
+	for _, raw := range strings.Split(stmt, ";") {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if _, err := tx.Exec(s); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return err
 		}
 	}
 	return nil

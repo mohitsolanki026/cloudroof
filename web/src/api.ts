@@ -75,6 +75,31 @@ export interface CloudAccount {
   createdAt: string
 }
 
+export interface ProviderField {
+  name: string
+  label: string
+  kind: 'text' | 'secret' | 'list'
+  optional?: boolean
+  hint?: string
+}
+
+// A provider declares the credential fields it needs; the Settings form
+// renders from this, so a new adapter needs no UI work.
+export interface ProviderSpec {
+  name: string
+  label: string
+  fields: ProviderField[]
+  notes?: string
+}
+
+// Mirrors provider.Credentials on the server.
+export interface ProviderCredentials {
+  token?: string
+  accessKeyId?: string
+  secretAccessKey?: string
+  regions?: string[]
+}
+
 export interface Run {
   id: number
   machineId: number | null
@@ -111,6 +136,7 @@ export interface Action {
   danger: number
   sudo: SudoWant
   parse: string
+  stream?: boolean
 }
 
 export interface ActionResult<T = unknown> {
@@ -182,6 +208,13 @@ export const api = {
       confirm = false,
       confirmName = '',
     ) => req<ActionResult<T>>('POST', `/api/machines/${id}/actions/${actionId}`, { params, confirm, confirmName }),
+    // Live follow (journalctl -f, docker logs -f): a websocket, not a fetch.
+    // Params ride in the query string, same names the buffered actions take.
+    streamURL: (id: number, actionId: string, params: Record<string, string> = {}) => {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      const qs = new URLSearchParams(params).toString()
+      return `${proto}://${location.host}/api/machines/${id}/actions/${actionId}/stream${qs ? '?' + qs : ''}`
+    },
     hostKey: (id: number) => req<HostKey>('GET', `/api/machines/${id}/hostkey`),
     trustHostKey: (id: number, algorithm: string, fingerprint: string) =>
       req<void>('POST', `/api/machines/${id}/hostkey/trust`, { algorithm, fingerprint }),
@@ -194,7 +227,7 @@ export const api = {
   },
   accounts: {
     list: () => req<CloudAccount[]>('GET', '/api/accounts'),
-    create: (a: { name: string; provider: string; token: string }) => req<CloudAccount>('POST', '/api/accounts', a),
+    create: (a: { name: string; provider: string; credentials: ProviderCredentials }) => req<CloudAccount>('POST', '/api/accounts', a),
     remove: (id: number) => req<void>('DELETE', `/api/accounts/${id}`),
     sync: (id: number) => req<{ total: number; created: number; updated: number }>('POST', `/api/accounts/${id}/sync`),
   },
@@ -203,7 +236,7 @@ export const api = {
       req<Run[]>('GET', `/api/runs?limit=${limit}${machineId ? `&machine=${machineId}` : ''}`),
   },
   catalog: () => req<Action[]>('GET', '/api/catalog').then(normalizeActions),
-  providers: () => req<string[]>('GET', '/api/providers'),
+  providers: () => req<ProviderSpec[]>('GET', '/api/providers'),
 }
 
 // hasCloud / hasHost mirror the Go methods, so the UI gates the same way the

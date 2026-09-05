@@ -1,12 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type Credential, type CloudAccount, type CredKind, type Machine } from '../api'
+import { api, type Credential, type CloudAccount, type CredKind, type Machine, type ProviderSpec, type ProviderCredentials } from '../api'
 import { ago } from '../lib/format'
 import { useToast } from '../App'
 
 export function Settings() {
   const [creds, setCreds] = useState<Credential[]>([])
   const [accounts, setAccounts] = useState<CloudAccount[]>([])
-  const [providers, setProviders] = useState<string[]>([])
+  const [providers, setProviders] = useState<ProviderSpec[]>([])
   const [machines, setMachines] = useState<Machine[]>([])
   const toast = useToast()
 
@@ -247,23 +247,40 @@ function Credentials({ creds, onDone }: { creds: Credential[]; onDone: () => Pro
 
 // --- cloud accounts -----------------------------------------------------------
 
-function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; providers: string[]; onDone: () => Promise<void> }) {
-  const [f, setF] = useState({ name: '', provider: providers[0] ?? 'hetzner', token: '' })
+function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; providers: ProviderSpec[]; onDone: () => Promise<void> }) {
+  const [name, setName] = useState('')
+  const [providerName, setProviderName] = useState(providers[0]?.name ?? 'hetzner')
+  const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [syncing, setSyncing] = useState<number | null>(null)
   const toast = useToast()
 
   useEffect(() => {
-    if (providers.length && !providers.includes(f.provider)) setF((x) => ({ ...x, provider: providers[0] }))
-  }, [providers])
+    if (providers.length && !providers.some((p) => p.name === providerName)) setProviderName(providers[0].name)
+  }, [providers, providerName])
+
+  const spec = providers.find((p) => p.name === providerName)
+
+  // The form renders from the provider's spec. Lists are typed comma-separated
+  // and sent as arrays; everything else goes through as-is.
+  const credentials = (): ProviderCredentials => {
+    const c: Record<string, unknown> = {}
+    for (const f of spec?.fields ?? []) {
+      const v = (values[f.name] ?? '').trim()
+      if (!v) continue
+      c[f.name] = f.kind === 'list' ? v.split(',').map((s) => s.trim()).filter(Boolean) : v
+    }
+    return c as ProviderCredentials
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
     try {
-      const a = await api.accounts.create(f)
+      const a = await api.accounts.create({ name, provider: providerName, credentials: credentials() })
       toast(`Connected ${a.name}`)
-      setF({ name: '', provider: f.provider, token: '' })
+      setName('')
+      setValues({})
       await onDone()
       await sync(a)
     } catch (e: any) {
@@ -287,7 +304,7 @@ function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; p
   }
 
   const remove = async (a: CloudAccount) => {
-    if (!confirm(`Disconnect "${a.name}"? Its machines stay in the fleet but lose power control.`)) return
+    if (!confirm(`Disconnect "${a.name}"? Its machines stay in the fleet but lose their cloud identity and power control.`)) return
     await api.accounts.remove(a.id)
     await onDone()
   }
@@ -314,7 +331,7 @@ function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; p
                       <strong>{a.name}</strong>
                     </td>
                     <td>
-                      <span className="chip accent">{a.provider}</span>
+                      <span className="chip accent">{providers.find((p) => p.name === a.provider)?.label ?? a.provider}</span>
                     </td>
                     <td>
                       <span className="muted">{ago(a.lastSyncAt)}</span>
@@ -342,29 +359,48 @@ function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; p
           <div className="row" style={{ gap: 14 }}>
             <div className="field grow">
               <label>Name</label>
-              <input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="hetzner — personal" />
+              <input className="input" required value={name} onChange={(e) => setName(e.target.value)} placeholder={`${spec?.label ?? 'cloud'} — personal`} />
             </div>
             <div className="field">
               <label>Provider</label>
-              <select className="select" value={f.provider} onChange={(e) => setF({ ...f, provider: e.target.value })}>
+              <select
+                className="select"
+                value={providerName}
+                onChange={(e) => {
+                  setProviderName(e.target.value)
+                  setValues({})
+                }}
+              >
                 {providers.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
+                  <option key={p.name} value={p.name}>
+                    {p.label}
                   </option>
                 ))}
               </select>
             </div>
           </div>
-          <div className="field">
-            <label>API token</label>
-            <input className="input mono" type="password" required value={f.token} onChange={(e) => setF({ ...f, token: e.target.value })} autoComplete="off" />
-            <span className="hint">
-              Hetzner: Cloud Console → project → Security → API tokens. Read &amp; Write is needed for power control; Read is enough for inventory only.
-            </span>
-          </div>
+          {spec?.fields.map((f) => (
+            <div className="field" key={f.name}>
+              <label>
+                {f.label}
+                {f.optional ? ' (optional)' : ''}
+              </label>
+              <input
+                className="input mono"
+                type={f.kind === 'secret' ? 'password' : 'text'}
+                required={!f.optional}
+                value={values[f.name] ?? ''}
+                onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {f.hint && <span className="hint">{f.hint}</span>}
+            </div>
+          ))}
+          {spec?.notes && <span className="hint">{spec.notes}</span>}
           <div className="form-actions">
-            <button className="btn primary" disabled={busy}>
-              {busy ? 'Checking token…' : 'Connect account'}
+            <button className="btn primary" disabled={busy || !spec}>
+              {busy ? 'Checking credentials…' : 'Connect account'}
             </button>
           </div>
         </form>

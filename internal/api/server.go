@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/machines/{id}/hostkey", s.getHostKey)
 	mux.HandleFunc("POST /api/machines/{id}/hostkey/trust", s.trustHostKey)
 	mux.HandleFunc("GET /api/machines/{id}/terminal", s.terminal)
+	mux.HandleFunc("GET /api/machines/{id}/actions/{action}/stream", s.streamAction)
 
 	// Credentials & accounts
 	mux.HandleFunc("GET /api/credentials", s.listCredentials)

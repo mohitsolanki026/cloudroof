@@ -59,31 +59,49 @@ func NewEngine(b *sshx.Broker, s *store.Store, r TargetResolver) *Engine {
 	return &Engine{broker: b, store: s, resolve: r}
 }
 
-// Run executes one action end to end: gate, render, exec, parse, audit.
-// Every path that reaches the host — including failures — writes a Run.
-func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
+// Prepared is the resolved, gated, host-checked form of a request: what to
+// run, how, and where. Both Run (buffered) and the streaming handler build one
+// so the gate, the requires-check, the sudo decision, and the quoting live in
+// exactly one place.
+type Prepared struct {
+	Action  Action
+	Machine store.Machine
+	Facts   store.HostFacts
+	Target  sshx.Target
+	// Shell is what Exec/OpenStream actually runs: "sh -s", possibly with a
+	// sudo prefix. Script is fed to its stdin.
+	Shell  string
+	Script string
+	// Command is the display and audit form: the rendered command with its
+	// sudo prefix, never the `sh -s` transport.
+	Command string
+}
+
+// Prepare validates a request against the machine and its facts and resolves
+// everything needed to execute it, without touching the host except to unseal
+// the credential. It does not run anything and writes no audit row.
+func (e *Engine) Prepare(req Request) (Prepared, error) {
 	act, ok := Lookup(req.ActionID)
 	if !ok {
-		return Result{}, ErrUnknownAction
+		return Prepared{}, ErrUnknownAction
 	}
-
 	m, err := e.store.GetMachine(req.MachineID)
 	if err != nil {
-		return Result{}, err
+		return Prepared{}, err
 	}
 	if !m.HasHost() {
-		return Result{}, ErrNoHost
+		return Prepared{}, ErrNoHost
 	}
 
 	// Validate the request before consulting host state: a missing
 	// confirmation or a bad parameter is wrong regardless of what the host
 	// looks like, and the caller should hear that specific reason.
 	if err := gate(act, m, req); err != nil {
-		return Result{}, err
+		return Prepared{}, err
 	}
 	command, err := render(act, req.Params)
 	if err != nil {
-		return Result{}, err
+		return Prepared{}, err
 	}
 
 	// The overview probe is the one action that may run before facts exist,
@@ -91,13 +109,13 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 	facts, err := e.store.GetFacts(m.ID)
 	if err != nil && !(errors.Is(err, store.ErrNotFound) && act.ID == "system.overview") {
 		if errors.Is(err, store.ErrNotFound) {
-			return Result{}, ErrNoFacts
+			return Prepared{}, ErrNoFacts
 		}
-		return Result{}, err
+		return Prepared{}, err
 	}
 	for _, r := range act.Requires {
 		if !facts.Has(r) {
-			return Result{}, fmt.Errorf("%w: needs %s", ErrNotAvailable, r)
+			return Prepared{}, fmt.Errorf("%w: needs %s", ErrNotAvailable, r)
 		}
 	}
 
@@ -109,7 +127,7 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 	// the UI preview show the command itself; `sh -s` is the transport.
 	shell, err := applySudo(act.Sudo, facts.SudoMode, "sh -s")
 	if err != nil {
-		return Result{}, err
+		return Prepared{}, err
 	}
 	script := act.Script
 	if script == "" {
@@ -119,22 +137,36 @@ func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
 
 	target, err := e.resolve(m)
 	if err != nil {
+		return Prepared{}, err
+	}
+	return Prepared{
+		Action: act, Machine: m, Facts: facts, Target: target,
+		Shell: shell, Script: script, Command: command,
+	}, nil
+}
+
+// Run executes one action end to end: prepare, exec, parse, audit.
+// Every path that reaches the host — including failures — writes a Run.
+func (e *Engine) Run(ctx context.Context, req Request) (Result, error) {
+	p, err := e.Prepare(req)
+	if err != nil {
 		return Result{}, err
 	}
+	act, m := p.Action, p.Machine
 
-	opts := sshx.ExecOpts{Timeout: act.Timeout, Stdin: strings.NewReader(script)}
+	opts := sshx.ExecOpts{Timeout: act.Timeout, Stdin: strings.NewReader(p.Script)}
 
 	run := store.Run{
 		MachineID:   &m.ID,
 		MachineName: m.Name,
 		ActionID:    act.ID,
-		Command:     command,
+		Command:     p.Command,
 		Danger:      act.Danger,
 		Actor:       req.Actor,
 		StartedAt:   time.Now().UTC(),
 	}
 
-	res, execErr := e.broker.Exec(ctx, target, shell, opts)
+	res, execErr := e.broker.Exec(ctx, p.Target, p.Shell, opts)
 	run.Stdout = res.Stdout
 	run.Stderr = res.Stderr
 	run.DurationMS = res.Duration.Milliseconds()
@@ -195,6 +227,13 @@ func render(act Action, params map[string]string) (string, error) {
 	}
 	cmd := act.Command
 	for _, p := range act.Params {
+		ph := "{{" + p.Name + "}}"
+		// Author sanity: a declared param must appear in the template. (A
+		// blanket "no {{ left" check can't be used — some commands carry
+		// literal Go-template braces, e.g. docker --format '{{json .}}'.)
+		if !strings.Contains(cmd, ph) {
+			return "", fmt.Errorf("%w: param %s is not used by %s", ErrBadParam, p.Name, act.ID)
+		}
 		v, ok := params[p.Name]
 		if !ok || v == "" {
 			return "", fmt.Errorf("%w: %s is required", ErrBadParam, p.Name)
@@ -202,10 +241,7 @@ func render(act Action, params map[string]string) (string, error) {
 		if !p.Pattern.MatchString(v) {
 			return "", fmt.Errorf("%w: %s=%q", ErrBadParam, p.Name, v)
 		}
-		cmd = strings.ReplaceAll(cmd, "{{"+p.Name+"}}", shellQuote(v))
-	}
-	if strings.Contains(cmd, "{{") {
-		return "", fmt.Errorf("%w: unresolved placeholder in %s", ErrBadParam, act.ID)
+		cmd = strings.ReplaceAll(cmd, ph, shellQuote(v))
 	}
 	return cmd, nil
 }

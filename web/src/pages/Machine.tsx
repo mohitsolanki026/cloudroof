@@ -10,12 +10,15 @@ import { useToast } from '../App'
 // Tabs render from the actions the host actually supports. A box without
 // systemctl never shows a Services tab; that is the catalog doing its job.
 
-const TAB_ORDER = ['overview', 'services', 'processes', 'network', 'disk', 'terminal', 'activity'] as const
+const TAB_ORDER = ['overview', 'services', 'programs', 'processes', 'containers', 'network', 'web', 'disk', 'terminal', 'activity'] as const
 const TAB_LABEL: Record<string, string> = {
   overview: 'Overview',
   services: 'Services',
+  programs: 'Programs',
   processes: 'Processes',
+  containers: 'Containers',
   network: 'Network',
+  web: 'Web',
   disk: 'Disk',
   terminal: 'Terminal',
   activity: 'Activity',
@@ -274,8 +277,11 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
 
       {tab === 'overview' && <Overview m={m} run={runAction} action={byId('system.overview')} />}
       {tab === 'services' && <Services m={m} run={runAction} actions={actions} />}
+      {tab === 'programs' && <Programs m={m} id={id} run={runAction} actions={actions} />}
       {tab === 'processes' && <Processes run={runAction} actions={actions} />}
-      {tab === 'network' && <Network run={runAction} action={byId('network.ports')} />}
+      {tab === 'containers' && <Containers id={id} run={runAction} actions={actions} />}
+      {tab === 'network' && <Network run={runAction} actions={actions} />}
+      {tab === 'web' && <Web m={m} run={runAction} actions={actions} />}
       {tab === 'disk' && <Disk m={m} run={runAction} actions={actions} />}
       {tab === 'terminal' && hasHost(m) && <Terminal machineId={id} />}
       {tab === 'activity' && (
@@ -447,6 +453,8 @@ function Services({ m, run, actions }: { m: Machine; run: Runner; actions: Actio
   const [units, setUnits] = useState<Unit[] | null>(null)
   const [filter, setFilter] = useState('')
   const [journal, setJournal] = useState<{ unit: string; lines: string[] } | null>(null)
+  const [follow, setFollow] = useState<string | null>(null)
+  const followAction = actions.find((a) => a.id === 'services.journal_follow')
   const list = actions.find((a) => a.id === 'services.list')
   const byId = (id: string) => actions.find((a) => a.id === id)
 
@@ -493,20 +501,33 @@ function Services({ m, run, actions }: { m: Machine; run: Runner; actions: Actio
           Refresh
         </button>
       </div>
-      {journal && (
-        <div className="card" style={{ marginBottom: 12 }}>
-          <div className="card-head">
-            <h3>
-              journal · <span className="mono">{journal.unit}</span>
-            </h3>
-            <button className="btn sm ghost" onClick={() => setJournal(null)}>
-              Close
-            </button>
-          </div>
-          <pre className="output" style={{ border: 0, borderRadius: 0 }}>
-            {journal.lines.join('\n') || '(empty)'}
-          </pre>
+      {follow && followAction ? (
+        <div style={{ marginBottom: 12 }}>
+          <LogStream machineId={m.id} action={followAction} params={{ unit: follow }} title={`journal · ${follow} (live)`} onClose={() => setFollow(null)} />
         </div>
+      ) : (
+        journal && (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-head">
+              <h3>
+                journal · <span className="mono">{journal.unit}</span>
+              </h3>
+              <div className="row" style={{ gap: 6 }}>
+                {followAction && (
+                  <button className="btn sm" onClick={() => setFollow(journal.unit)}>
+                    Follow live
+                  </button>
+                )}
+                <button className="btn sm ghost" onClick={() => setJournal(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <pre className="output" style={{ border: 0, borderRadius: 0 }}>
+              {journal.lines.join('\n') || '(empty)'}
+            </pre>
+          </div>
+        )
       )}
       <div className="card">
         {units === null ? (
@@ -670,14 +691,21 @@ function Processes({ run, actions }: { run: Runner; actions: Action[] }) {
 interface Listener {
   proto: string
   local: string
+  peer: string
   port: number
   process: string
   pid: number
 }
 
-function Network({ run, action }: { run: Runner; action?: Action }) {
+function Network({ run, actions }: { run: Runner; actions: Action[] }) {
+  const [mode, setMode] = useState<'listening' | 'established'>('listening')
   const [ls, setLs] = useState<Listener[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const ports = actions.find((a) => a.id === 'network.ports')
+  const established = actions.find((a) => a.id === 'network.established')
+  const reach = actions.find((a) => a.id === 'network.reach')
+  const action = mode === 'listening' ? ports : established
+
   const refresh = useCallback(async () => {
     if (!action) return
     setFailed(false)
@@ -686,18 +714,30 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
     else setFailed(true)
   }, [action, run])
   useEffect(() => {
+    setLs(null)
     refresh()
   }, [refresh])
 
   return (
     <>
       <div className="row" style={{ marginBottom: 12 }}>
-        <span className="hint">Listening sockets, mapped to the owning process.</span>
+        <div className="seg">
+          <button className={'seg-btn' + (mode === 'listening' ? ' active' : '')} onClick={() => setMode('listening')}>
+            Listening
+          </button>
+          {established && (
+            <button className={'seg-btn' + (mode === 'established' ? ' active' : '')} onClick={() => setMode('established')}>
+              Established
+            </button>
+          )}
+        </div>
+        <span className="hint">{mode === 'listening' ? 'Listening sockets, mapped to the owning process.' : 'Established connections.'}</span>
         <span className="grow" />
         <button className="btn sm" onClick={refresh}>
           Refresh
         </button>
       </div>
+      {reach && <ReachProbe run={run} action={reach} />}
       <div className="card">
         {ls === null ? (
           <div className="empty">{failed ? 'Could not read sockets — see the toast for the reason.' : 'Reading…'}</div>
@@ -708,7 +748,7 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
                 <tr>
                   <th>Proto</th>
                   <th className="num">Port</th>
-                  <th>Bind</th>
+                  <th>{mode === 'listening' ? 'Bind' : 'Peer'}</th>
                   <th>Process</th>
                   <th className="num">PID</th>
                 </tr>
@@ -720,7 +760,7 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
                     <tr key={i}>
                       <td className="mono">{l.proto}</td>
                       <td className="num">{l.port}</td>
-                      <td className="mono muted">{l.local}</td>
+                      <td className="mono muted">{mode === 'established' ? l.peer || l.local : l.local}</td>
                       <td className="mono">{l.process || <span className="muted">—</span>}</td>
                       <td className="num muted">{l.pid || ''}</td>
                     </tr>
@@ -731,6 +771,38 @@ function Network({ run, action }: { run: Runner; action?: Action }) {
         )}
       </div>
     </>
+  )
+}
+
+function ReachProbe({ run, action }: { run: Runner; action: Action }) {
+  const [url, setUrl] = useState('https://')
+  const [out, setOut] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const go = async () => {
+    setBusy(true)
+    const d = await run<{ text: string }>(action, { url })
+    setBusy(false)
+    if (d) setOut(d.text.trim())
+  }
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card-body" style={{ display: 'grid', gap: 10 }}>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            className="input mono grow"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && go()}
+            placeholder="https://example.com/health"
+            spellCheck={false}
+          />
+          <button className="btn" onClick={go} disabled={busy}>
+            {busy ? 'Reaching…' : 'Reach from host'}
+          </button>
+        </div>
+        {out && <pre className="output" style={{ maxHeight: 160 }}>{out}</pre>}
+      </div>
+    </div>
   )
 }
 
@@ -790,6 +862,454 @@ function Disk({ m, run, actions }: { m: Machine; run: Runner; actions: Action[] 
         )}
       </div>
     </>
+  )
+}
+
+// --- live log stream ------------------------------------------------------------
+
+// LogStream follows journalctl -f / docker logs -f / supervisorctl tail -f over
+// a websocket. Lines arrive one frame each; scrollback is capped so a chatty
+// service can't grow the DOM without bound. It auto-scrolls only while the
+// viewer is already at the bottom, so scrolling up to read holds position.
+function LogStream({
+  machineId,
+  action,
+  params,
+  title,
+  onClose,
+}: {
+  machineId: number
+  action: Action
+  params: Record<string, string>
+  title: string
+  onClose: () => void
+}) {
+  const [lines, setLines] = useState<string[]>([])
+  const [state, setState] = useState<'connecting' | 'live' | 'closed'>('connecting')
+  const boxRef = useRef<HTMLPreElement>(null)
+  const atBottom = useRef(true)
+  const MAX = 2000
+
+  useEffect(() => {
+    let ws: WebSocket | null = null
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (cancelled) return
+      const sock = new WebSocket(api.machines.streamURL(machineId, action.id, params))
+      ws = sock
+      sock.onopen = () => setState('live')
+      sock.onmessage = (ev) => {
+        if (typeof ev.data !== 'string') return
+        setLines((prev) => {
+          const next = prev.concat(ev.data)
+          return next.length > MAX ? next.slice(next.length - MAX) : next
+        })
+      }
+      sock.onclose = () => setState('closed')
+      sock.onerror = () => setState('closed')
+    }, 0)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      ws?.close()
+    }
+  }, [machineId, action.id, JSON.stringify(params)])
+
+  useEffect(() => {
+    const el = boxRef.current
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight
+  }, [lines])
+
+  const onScroll = () => {
+    const el = boxRef.current
+    if (!el) return
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3>
+          {title} <span className={'chip ' + (state === 'live' ? 'ok' : state === 'closed' ? 'crit' : '')}>{state}</span>
+        </h3>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn sm ghost" onClick={() => setLines([])}>
+            Clear
+          </button>
+          <button className="btn sm" onClick={onClose}>
+            Stop
+          </button>
+        </div>
+      </div>
+      <pre ref={boxRef} className="output" onScroll={onScroll} style={{ border: 0, borderRadius: 0, maxHeight: 480, minHeight: 240 }}>
+        {lines.length ? lines.join('\n') : state === 'connecting' ? 'connecting…' : '(no output yet)'}
+      </pre>
+    </div>
+  )
+}
+
+// --- programs (supervisor) ------------------------------------------------------
+
+interface Program {
+  name: string
+  state: string
+  info: string
+}
+
+function Programs({ m, id, run, actions }: { m: Machine; id: number; run: Runner; actions: Action[] }) {
+  const [progs, setProgs] = useState<Program[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [tail, setTail] = useState<string | null>(null)
+  const list = actions.find((a) => a.id === 'programs.list')
+  const update = actions.find((a) => a.id === 'programs.update')
+  const tailAction = actions.find((a) => a.id === 'programs.tail')
+  const byId = (aid: string) => actions.find((a) => a.id === aid)
+
+  const refresh = useCallback(async () => {
+    if (!list) return
+    setFailed(false)
+    const d = await run<{ programs: Program[] }>(list)
+    if (d) setProgs(d.programs)
+    else setFailed(true)
+  }, [list, run])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const act = async (aid: string, prog: string) => {
+    const a = byId(aid)
+    if (!a) return
+    const r = await run<unknown>(a, { prog })
+    if (r !== null) setTimeout(refresh, 400)
+  }
+
+  const stateClass = (st: string) => {
+    if (st === 'RUNNING') return 'ok'
+    if (st === 'STARTING' || st === 'STOPPING' || st === 'BACKOFF') return 'warn'
+    if (st === 'FATAL' || st === 'EXITED') return 'crit'
+    return ''
+  }
+  const canWrite = canRun(byId('programs.restart') ?? ({} as Action), m.facts)
+
+  return (
+    <>
+      <div className="row" style={{ marginBottom: 12 }}>
+        <span className="hint">supervisor programs</span>
+        <span className="grow" />
+        {update && (
+          <button className="btn sm" onClick={() => act('programs.update', '')}>
+            Reread &amp; update
+          </button>
+        )}
+        <button className="btn sm" onClick={refresh}>
+          Refresh
+        </button>
+      </div>
+      {tail && tailAction && (
+        <div style={{ marginBottom: 12 }}>
+          <LogStream machineId={id} action={tailAction} params={{ prog: tail }} title={`tail · ${tail}`} onClose={() => setTail(null)} />
+        </div>
+      )}
+      <div className="card">
+        {progs === null ? (
+          <div className="empty">{failed ? 'Could not reach supervisor — see the toast.' : 'Reading…'}</div>
+        ) : progs.length === 0 ? (
+          <div className="empty">No programs configured.</div>
+        ) : (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Program</th>
+                  <th>State</th>
+                  <th>Detail</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {progs.map((p) => (
+                  <tr key={p.name}>
+                    <td className="mono">{p.name}</td>
+                    <td>
+                      <span className={'chip ' + stateClass(p.state)}>{p.state}</span>
+                    </td>
+                    <td className="muted mono" style={{ fontSize: 12 }}>
+                      {p.info}
+                    </td>
+                    <td className="actions">
+                      {tailAction && (
+                        <button className="btn sm ghost" onClick={() => setTail(p.name)}>
+                          Tail
+                        </button>
+                      )}
+                      {canWrite &&
+                        (p.state === 'RUNNING' ? (
+                          <>
+                            <button className="btn sm" onClick={() => act('programs.restart', p.name)}>
+                              Restart
+                            </button>
+                            <button className="btn sm warn" onClick={() => act('programs.stop', p.name)}>
+                              Stop
+                            </button>
+                          </>
+                        ) : (
+                          <button className="btn sm primary" onClick={() => act('programs.start', p.name)}>
+                            Start
+                          </button>
+                        ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+// --- containers (docker) --------------------------------------------------------
+
+interface ContainerRow {
+  id: string
+  name: string
+  image: string
+  state: string
+  status: string
+  ports: string
+  runningFor: string
+}
+
+function Containers({ id, run, actions }: { id: number; run: Runner; actions: Action[] }) {
+  const [rows, setRows] = useState<ContainerRow[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [logs, setLogs] = useState<{ id: string; name: string } | null>(null)
+  const list = actions.find((a) => a.id === 'containers.list')
+  const logsAction = actions.find((a) => a.id === 'containers.logs')
+  const df = actions.find((a) => a.id === 'containers.df')
+  const prune = actions.find((a) => a.id === 'containers.prune')
+  const byId = (aid: string) => actions.find((a) => a.id === aid)
+  const [dfOut, setDfOut] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    if (!list) return
+    setFailed(false)
+    const d = await run<{ containers: ContainerRow[] }>(list)
+    if (d) setRows(d.containers)
+    else setFailed(true)
+  }, [list, run])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  const act = async (aid: string, cid: string) => {
+    const a = byId(aid)
+    if (!a) return
+    const r = await run<unknown>(a, { id: cid })
+    if (r !== null) setTimeout(refresh, 500)
+  }
+  const showDf = async () => {
+    if (!df) return
+    const d = await run<{ text: string }>(df)
+    if (d) setDfOut(d.text.trim())
+  }
+
+  return (
+    <>
+      <div className="row" style={{ marginBottom: 12 }}>
+        <span className="hint">docker containers</span>
+        <span className="grow" />
+        {df && (
+          <button className="btn sm" onClick={showDf}>
+            Disk usage
+          </button>
+        )}
+        {prune && (
+          <button className="btn sm warn" onClick={() => run(prune).then(() => setTimeout(refresh, 500))}>
+            Prune unused
+          </button>
+        )}
+        <button className="btn sm" onClick={refresh}>
+          Refresh
+        </button>
+      </div>
+      {dfOut && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="card-head">
+            <h3>docker system df</h3>
+            <button className="btn sm ghost" onClick={() => setDfOut(null)}>
+              Close
+            </button>
+          </div>
+          <pre className="output" style={{ border: 0, borderRadius: 0 }}>
+            {dfOut}
+          </pre>
+        </div>
+      )}
+      {logs && logsAction && (
+        <div style={{ marginBottom: 12 }}>
+          <LogStream machineId={id} action={logsAction} params={{ id: logs.id }} title={`logs · ${logs.name}`} onClose={() => setLogs(null)} />
+        </div>
+      )}
+      <div className="card">
+        {rows === null ? (
+          <div className="empty">{failed ? 'Could not reach docker — see the toast.' : 'Reading…'}</div>
+        ) : rows.length === 0 ? (
+          <div className="empty">No containers.</div>
+        ) : (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Image</th>
+                  <th>State</th>
+                  <th>Status</th>
+                  <th>Ports</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => (
+                  <tr key={c.id}>
+                    <td className="mono">{c.name}</td>
+                    <td className="mono muted" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.image}
+                    </td>
+                    <td>
+                      <span className={'chip ' + (c.state === 'running' ? 'ok' : c.state === 'paused' ? 'warn' : '')}>{c.state}</span>
+                    </td>
+                    <td className="muted" style={{ fontSize: 12 }}>
+                      {c.status}
+                    </td>
+                    <td className="mono muted" style={{ fontSize: 11.5, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.ports}
+                    </td>
+                    <td className="actions">
+                      {logsAction && (
+                        <button className="btn sm ghost" onClick={() => setLogs({ id: c.id, name: c.name })}>
+                          Logs
+                        </button>
+                      )}
+                      {c.state === 'running' ? (
+                        <>
+                          <button className="btn sm" onClick={() => act('containers.restart', c.id)}>
+                            Restart
+                          </button>
+                          <button className="btn sm warn" onClick={() => act('containers.stop', c.id)}>
+                            Stop
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn sm primary" onClick={() => act('containers.start', c.id)}>
+                          Start
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+// --- web (nginx / TLS) ----------------------------------------------------------
+
+interface CertData {
+  ok?: boolean
+  subject?: string
+  issuer?: string
+  notBefore?: string
+  notAfter?: string
+}
+
+function Web({ m, run, actions }: { m: Machine; run: Runner; actions: Action[] }) {
+  const test = actions.find((a) => a.id === 'web.nginx_test')
+  const reload = actions.find((a) => a.id === 'web.nginx_reload')
+  const cert = actions.find((a) => a.id === 'web.tls_cert')
+  const [testOut, setTestOut] = useState<string | null>(null)
+  const [testOk, setTestOk] = useState(false)
+  const [host, setHost] = useState('')
+  const [port, setPort] = useState('443')
+  const [certOut, setCertOut] = useState<CertData | null>(null)
+
+  const runTest = async () => {
+    if (!test) return
+    const d = await run<{ text: string }>(test)
+    if (d) {
+      setTestOut(d.text.trim())
+      // nginx -t prints "syntax is ok" / "test is successful" on success.
+      setTestOk(/successful|syntax is ok/i.test(d.text))
+    }
+  }
+  const runCert = async () => {
+    if (!cert) return
+    const d = await run<CertData>(cert, { host, port })
+    if (d) setCertOut(d)
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      {(test || reload) && (
+        <div className="section" style={{ margin: 0 }}>
+          <h2>nginx</h2>
+          <div className="card">
+            <div className="card-body" style={{ display: 'grid', gap: 10 }}>
+              <div className="row" style={{ gap: 8 }}>
+                {test && (
+                  <button className="btn" onClick={runTest}>
+                    Test config
+                  </button>
+                )}
+                {reload && canRun(reload, m.facts) && (
+                  <button className="btn primary" disabled={!testOk} onClick={() => run(reload)} title={testOk ? '' : 'Run a passing config test first'}>
+                    Reload
+                  </button>
+                )}
+                {reload && !testOk && <span className="hint">Reload unlocks after the config test passes.</span>}
+              </div>
+              {testOut && <pre className={'output' + (testOk ? '' : ' err')}>{testOut}</pre>}
+            </div>
+          </div>
+        </div>
+      )}
+      {cert && (
+        <div className="section" style={{ margin: 0 }}>
+          <h2>TLS certificate</h2>
+          <div className="card">
+            <div className="card-body" style={{ display: 'grid', gap: 12 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <input className="input mono grow" value={host} onChange={(e) => setHost(e.target.value)} placeholder="example.com" spellCheck={false} />
+                <input className="input mono" style={{ width: 90 }} value={port} onChange={(e) => setPort(e.target.value)} />
+                <button className="btn" onClick={runCert} disabled={!host}>
+                  Check
+                </button>
+              </div>
+              {certOut &&
+                (certOut.ok || certOut.notAfter ? (
+                  <dl className="kv">
+                    <dt>Subject</dt>
+                    <dd>{certOut.subject}</dd>
+                    <dt>Issuer</dt>
+                    <dd>{certOut.issuer}</dd>
+                    <dt>Valid from</dt>
+                    <dd>{certOut.notBefore}</dd>
+                    <dt>Expires</dt>
+                    <dd>{certOut.notAfter}</dd>
+                  </dl>
+                ) : (
+                  <div className="error-box">No certificate returned — the handshake to {host}:{port} failed.</div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
