@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, hasCloud, hasHost, renderCommand, canRun, ApiError, type Action, type Machine, type PowerAction, type HostKey } from '../api'
+import { api, hasCloud, hasHost, renderCommand, canRun, ApiError, type Action, type Machine, type PowerAction, type HostKey, type Credential } from '../api'
 import { StatusDots, PowerChip, ReachChip, ProviderChip } from '../components/Status'
 import { Confirm } from '../components/Confirm'
 import { Terminal } from '../components/Terminal'
@@ -40,6 +40,7 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
   const [pending, setPending] = useState<Pending | null>(null)
   const [busy, setBusy] = useState(false)
   const [probing, setProbing] = useState(false)
+  const [editing, setEditing] = useState(false)
   const toast = useToast()
 
   // runAction reads the machine through a ref so its identity does not change
@@ -223,6 +224,9 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
               {probing ? 'Probing…' : 'Probe & refresh facts'}
             </button>
           )}
+          <button className="btn" onClick={() => setEditing(true)}>
+            Edit connection
+          </button>
           {hasCloud(m) && (
             <>
               <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
@@ -258,6 +262,14 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
             This machine has no SSH user or credential yet. Link it in <a href="#/settings">Settings</a> to unlock the action tabs and terminal.
           </div>
         )}
+        {hasHost(m) && hasCloud(m) && m.publicIp && m.publicIp !== m.sshHost && (
+          <div className="warn-box">
+            SSH is set to <span className="mono">{m.sshHost}</span> but the provider now reports{' '}
+            <span className="mono">{m.publicIp}</span> — the instance's public IP likely changed on a stop/start.{' '}
+            <button className="btn sm" onClick={() => setEditing(true)}>Update address</button>
+            {' '}or attach an Elastic/static IP so it stops moving.
+          </div>
+        )}
         {m.facts && m.facts.sudoMode !== 'root' && m.facts.sudoMode !== 'nopasswd' && (
           <div className="warn-box">
             {m.facts.sudoMode === 'password' ? 'sudo on this host asks for a password' : 'this host has no usable sudo'}, so actions that need root (service
@@ -288,6 +300,17 @@ export function MachinePage({ id, tab }: { id: number; tab: string }) {
         <div className="card">
           <RunList machineId={id} />
         </div>
+      )}
+
+      {editing && (
+        <EditConnection
+          m={m}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false)
+            probe()
+          }}
+        />
       )}
 
       {pending && (
@@ -1309,6 +1332,105 @@ function Web({ m, run, actions }: { m: Machine; run: Runner; actions: Action[] }
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// --- edit connection ------------------------------------------------------------
+
+// EditConnection changes a machine's SSH address / port / user / credential —
+// the one thing "Link synced instances" can't do for an already-linked box.
+// It exists chiefly for the case where a cloud instance's ephemeral public IP
+// changed and ssh_host had already diverged from it before the auto-follow
+// could catch it. Cloud identity, name and tags are preserved untouched.
+function EditConnection({ m, onClose, onSaved }: { m: Machine; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast()
+  const [creds, setCreds] = useState<Credential[]>([])
+  const [host, setHost] = useState(m.sshHost)
+  const [port, setPort] = useState(m.sshPort || 22)
+  const [user, setUser] = useState(m.sshUser)
+  const [credentialId, setCredentialId] = useState<string>(m.credentialId ? String(m.credentialId) : '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.credentials.list().then(setCreds).catch(() => {})
+  }, [])
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.machines.update(m.id, {
+        name: m.name,
+        tags: m.tags,
+        sshHost: host.trim(),
+        sshPort: Number(port) || 22,
+        sshUser: user.trim(),
+        credentialId: credentialId ? Number(credentialId) : null,
+        cloudAccountId: m.cloudAccountId,
+        instanceId: m.instanceId,
+        provider: m.provider,
+      })
+      toast('Connection updated')
+      onSaved()
+    } catch (e: any) {
+      toast(e.message, true)
+      setBusy(false)
+    }
+  }
+
+  const ipMismatch = m.publicIp && m.publicIp !== host
+  return (
+    <div className="modal-bg" onClick={busy ? undefined : onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <span className="dot" />
+          <h3>Edit connection · {m.name}</h3>
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label>Host or IP</label>
+            <input className="input mono" value={host} onChange={(e) => setHost(e.target.value)} spellCheck={false} autoFocus />
+            {ipMismatch && (
+              <span className="hint">
+                Provider reports <span className="mono">{m.publicIp}</span>.{' '}
+                <button className="btn sm ghost" onClick={() => setHost(m.publicIp)}>
+                  Use it
+                </button>
+              </span>
+            )}
+          </div>
+          <div className="row" style={{ gap: 14 }}>
+            <div className="field" style={{ width: 100 }}>
+              <label>Port</label>
+              <input className="input mono" type="number" min={1} max={65535} value={port} onChange={(e) => setPort(Number(e.target.value))} />
+            </div>
+            <div className="field grow">
+              <label>SSH user</label>
+              <input className="input mono" value={user} onChange={(e) => setUser(e.target.value)} spellCheck={false} placeholder="ec2-user, ubuntu, root…" />
+            </div>
+          </div>
+          <div className="field">
+            <label>Credential</label>
+            <select className="select" value={credentialId} onChange={(e) => setCredentialId(e.target.value)}>
+              <option value="">— none —</option>
+              {creds.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.kind === 'ssh_key' ? 'key' : 'password'})
+                </option>
+              ))}
+            </select>
+          </div>
+          <span className="hint">Changing the host or port re-pins the host key and re-fingerprints on the next probe.</span>
+        </div>
+        <div className="modal-foot">
+          <button className="btn" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn primary" onClick={save} disabled={busy || !host.trim() || !user.trim()}>
+            {busy ? 'Saving…' : 'Save & probe'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
