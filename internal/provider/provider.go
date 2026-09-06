@@ -76,10 +76,21 @@ type Provider interface {
 // rest. Which fields a provider reads is declared by its Spec, so the UI can
 // render the right form and the handler can validate before sealing.
 type Credentials struct {
-	Token           string   `json:"token,omitempty"`
+	// Token-style (Hetzner, DigitalOcean).
+	Token string `json:"token,omitempty"`
+	// Key pair (AWS).
 	AccessKeyID     string   `json:"accessKeyId,omitempty"`
 	SecretAccessKey string   `json:"secretAccessKey,omitempty"`
 	Regions         []string `json:"regions,omitempty"`
+	// Service principal (Azure).
+	SubscriptionID string `json:"subscriptionId,omitempty"`
+	TenantID       string `json:"tenantId,omitempty"`
+	ClientID       string `json:"clientId,omitempty"`
+	ClientSecret   string `json:"clientSecret,omitempty"`
+	// Service account (GCP): the key JSON, and the projects to scan (empty
+	// falls back to the project_id inside the key).
+	ServiceAccountJSON string   `json:"serviceAccountJson,omitempty"`
+	Projects           []string `json:"projects,omitempty"`
 }
 
 // Get returns a field by its JSON name, for spec-driven validation.
@@ -93,21 +104,36 @@ func (c Credentials) Get(name string) string {
 		return c.SecretAccessKey
 	case "regions":
 		return strings.Join(c.Regions, ",")
+	case "subscriptionId":
+		return c.SubscriptionID
+	case "tenantId":
+		return c.TenantID
+	case "clientId":
+		return c.ClientID
+	case "clientSecret":
+		return c.ClientSecret
+	case "serviceAccountJson":
+		return c.ServiceAccountJSON
+	case "projects":
+		return strings.Join(c.Projects, ",")
 	}
 	return ""
 }
 
 // Empty reports whether no field is set.
 func (c Credentials) Empty() bool {
-	return c.Token == "" && c.AccessKeyID == "" && c.SecretAccessKey == "" && len(c.Regions) == 0
+	return c.Token == "" && c.AccessKeyID == "" && c.SecretAccessKey == "" && len(c.Regions) == 0 &&
+		c.SubscriptionID == "" && c.TenantID == "" && c.ClientID == "" && c.ClientSecret == "" &&
+		c.ServiceAccountJSON == "" && len(c.Projects) == 0
 }
 
 type FieldKind string
 
 const (
-	FieldText   FieldKind = "text"
-	FieldSecret FieldKind = "secret"
-	FieldList   FieldKind = "list" // comma-separated in the UI, []string in Credentials
+	FieldText     FieldKind = "text"
+	FieldSecret   FieldKind = "secret"
+	FieldList     FieldKind = "list"     // comma-separated in the UI, []string in Credentials
+	FieldTextarea FieldKind = "textarea" // multi-line, e.g. a pasted JSON key
 )
 
 // Field describes one credential input the UI renders.

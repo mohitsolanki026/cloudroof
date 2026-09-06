@@ -385,15 +385,26 @@ function Accounts({ accounts, providers, onDone }: { accounts: CloudAccount[]; p
                 {f.label}
                 {f.optional ? ' (optional)' : ''}
               </label>
-              <input
-                className="input mono"
-                type={f.kind === 'secret' ? 'password' : 'text'}
-                required={!f.optional}
-                value={values[f.name] ?? ''}
-                onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
-                autoComplete="off"
-                spellCheck={false}
-              />
+              {f.kind === 'textarea' ? (
+                <textarea
+                  className="textarea"
+                  required={!f.optional}
+                  value={values[f.name] ?? ''}
+                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                  spellCheck={false}
+                  placeholder={'{\n  "type": "service_account",\n  ...\n}'}
+                />
+              ) : (
+                <input
+                  className="input mono"
+                  type={f.kind === 'secret' ? 'password' : 'text'}
+                  required={!f.optional}
+                  value={values[f.name] ?? ''}
+                  onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
               {f.hint && <span className="hint">{f.hint}</span>}
             </div>
           ))}

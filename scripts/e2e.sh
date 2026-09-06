@@ -206,8 +206,10 @@ else: check("services.restart (required) refused without sudo", st == 409 and r[
 print("-- v1 catalog: providers, new actions --")
 st, specs = call("GET", "/api/providers")
 names = {s["name"] for s in specs}
-check("three providers registered", names == {"hetzner", "digitalocean", "aws"}, str(sorted(names)))
+check("five providers registered", names == {"hetzner", "digitalocean", "aws", "azure", "gcp"}, str(sorted(names)))
 check("aws spec declares key-pair fields", any(s["name"] == "aws" and {f["name"] for f in s["fields"]} >= {"accessKeyId", "secretAccessKey"} for s in specs))
+check("azure spec declares service-principal fields", any(s["name"] == "azure" and {f["name"] for f in s["fields"]} >= {"subscriptionId", "tenantId", "clientId", "clientSecret"} for s in specs))
+check("gcp spec declares a textarea JSON key field", any(s["name"] == "gcp" and any(f["name"] == "serviceAccountJson" and f["kind"] == "textarea" for f in s["fields"]) for s in specs))
 if "docker" in f["capabilities"]:
     check("docker host exposes containers.list", "containers.list" in ids)
 if "supervisorctl" not in f["capabilities"]:

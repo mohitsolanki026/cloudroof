@@ -19,11 +19,6 @@ import (
 	"bosun/internal/sshx"
 	"bosun/internal/store"
 	"bosun/web"
-
-	// Provider adapters register themselves on import.
-	_ "bosun/internal/provider/amazon"
-	_ "bosun/internal/provider/digitalocean"
-	_ "bosun/internal/provider/hetzner"
 )
 
 var version = "dev"

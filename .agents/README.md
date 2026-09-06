@@ -47,10 +47,13 @@ internal/provider/    Provider interface + registry + Credentials/Spec. Adapters
                       self-register in init() with a Spec (the fields the UI
                       renders) and a Factory. New(name, creds) validates
                       against the spec before constructing.
-internal/provider/hetzner/       token       (hcloud-go v2)
-internal/provider/digitalocean/  token       (godo)
-internal/provider/amazon/        key pair    (aws-sdk-go-v2/ec2); instance id
-                      is "region:i-…" so the interface stays region-agnostic.
+internal/provider/hetzner/       token          (hcloud-go v2)
+internal/provider/digitalocean/  token          (godo)
+internal/provider/amazon/        key pair       (aws-sdk-go-v2/ec2); id = "region:i-…"
+internal/provider/azure/         service principal (armcompute+armnetwork); id = full ARM resource id
+internal/provider/google/        service acct JSON (compute/v1); id = "project/zone/name"
+                      Each cmd/bosun/prov_*.go blank-imports one adapter behind
+                      a build tag (no<name>) so it can be compiled out.
 internal/actions/     catalog.go = declarative Action list; engine.go = Prepare
                       (gate → render → requires → sudo → resolve) shared by
                       Run (buffered) and streaming; parsers.go = stdout → JSON;
@@ -185,10 +188,16 @@ stored credential unreadable; there is no recovery by design.
 ## Adding things
 
 **A provider**: implement `provider.Provider` in
-`internal/provider/<name>/`, call `provider.Register` in `init()`, import it
-for side effect in `cmd/bosun/main.go`. Map the provider's states onto
-`store.PowerState` and its power calls onto the five `PowerAction`s. Do not
-add provider-specific fields to `Machine`.
+`internal/provider/<name>/`, call `provider.Register(Spec, Factory)` in
+`init()` with the credential fields the UI should render, and add a
+`cmd/bosun/prov_<name>.go` that blank-imports it behind a `//go:build !no<name>`
+tag. Add any new credential fields to `provider.Credentials` (+ `Get`/`Empty`).
+Map the provider's states onto `store.PowerState` and its power calls onto the
+five `PowerAction`s; encode whatever addressing it needs (region, zone,
+resource group) inside `instance_id` so the interface stays cloud-agnostic. Do
+not add provider-specific columns to `Machine`. Instances must return an IP in
+`PublicIP` where possible so `ssh_host` can pre-fill (Azure needs the network
+API for this; it is best-effort there).
 
 **An action**: append to `actions.Catalog`. Set `Requires` to the capability
 the fingerprint script would need to detect (add it to the `for c in …` loop
@@ -202,8 +211,9 @@ there.
 
 ## State of the build
 
-v1.0. Hetzner + DigitalOcean + AWS EC2; systemd services, supervisor programs,
-docker containers, nginx/TLS web, the process/network/disk catalog; live log
+v1.1. Five providers (Hetzner, DigitalOcean, AWS EC2, Azure, GCP), each
+compile-out-able via build tags; systemd services, supervisor programs, docker
+containers, nginx/TLS web, the process/network/disk catalog; live log
 streaming; self-refreshing reachability; single admin user. No metrics
 history, no bulk actions, no groups — the next milestone. See the design doc's
 roadmap for what is deliberately excluded.
@@ -211,9 +221,13 @@ roadmap for what is deliberately excluded.
 Known gaps to be honest about:
 - `processes.top` uses procps `ps` flags; BusyBox `ps` will return nothing useful.
 - `network.*` needs `ss` (iproute2); no `netstat` fallback yet.
-- The AWS SDK makes the binary ~51 MB (stripped); Hetzner/DO alone would be
-  a fraction of that. Acceptable for a self-hosted tool, but it is the one
-  place the "one small binary" story frays.
+- Cloud SDKs dominate the binary: all five providers ~59 MB stripped,
+  Hetzner+DO alone ~16 MB. Build tags (`make slim`, or `-tags no<name>`) let a
+  user drop the heavy ones. This is the one place the "one small binary" story
+  needs a caveat.
+- Azure IPs come from the network API and are best-effort: with only Compute
+  permissions the VM lists and powers but `ssh_host` stays empty until set via
+  Edit connection.
 - No auth on the HTTP API. The default bind is loopback and `guard` blocks
   browser cross-site and rebinding attacks, but anyone who can reach the port
   can drive it. Put it behind a reverse proxy with auth. Multi-user auth is a

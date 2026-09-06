@@ -54,13 +54,32 @@ shows a Containers tab, one without systemd never shows Services.
 
 ## Providers
 
-Hetzner Cloud, DigitalOcean, and AWS EC2. Each needs only read + power
-permissions; the account form tells you exactly which. AWS scans the regions
-you name, or every region on the account if you name none.
+Hetzner Cloud, DigitalOcean, AWS EC2, Azure, and Google Cloud. Each needs only
+read + power permissions, and the account form tells you exactly which:
+
+- **Hetzner / DigitalOcean** — an API token.
+- **AWS** — an access key pair; scans the regions you name, or all of them.
+- **Azure** — a service principal (subscription + tenant + client id/secret).
+- **Google Cloud** — a service-account JSON key; scans the projects you name,
+  or the key's own project.
 
 Machines that are not on a supported provider (bare metal, a Pi, a provider we
 don't speak yet) work fine — add them by SSH and you get everything except
 power control.
+
+### Slim builds
+
+The AWS, Azure, and GCP SDKs are large; including all five providers makes a
+~59 MB binary, while Hetzner + DigitalOcean alone is ~16 MB. Providers are
+opt-out at build time:
+
+```
+make slim                              # drops AWS + Azure + GCP (~16 MB)
+go build -tags "noaws noazure" ./cmd/bosun   # any combination
+```
+
+Tags: `nohetzner nodo noaws noazure nogcp`. A provider compiled out simply
+never registers, and its account type doesn't appear in the UI.
 
 ## Safety
 
@@ -103,7 +122,7 @@ See `.agents/README.md` for the architecture brief and invariants.
 
 ## Status
 
-v1.0. Three providers, the systemd / supervisor / docker / nginx catalog, live
-log streaming, self-refreshing reachability, single admin user, one-command
-install. No metrics history, no bulk actions, no groups yet — those are the
-next milestone.
+v1.1. Five providers (Hetzner, DigitalOcean, AWS, Azure, GCP), the systemd /
+supervisor / docker / nginx catalog, live log streaming, self-refreshing
+reachability, single admin user, one-command install. No metrics history, no
+bulk actions, no groups yet — those are the next milestone.

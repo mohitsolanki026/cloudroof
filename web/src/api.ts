@@ -78,7 +78,7 @@ export interface CloudAccount {
 export interface ProviderField {
   name: string
   label: string
-  kind: 'text' | 'secret' | 'list'
+  kind: 'text' | 'secret' | 'list' | 'textarea'
   optional?: boolean
   hint?: string
 }
