@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type Credential, type CloudAccount, type CredKind, type Machine, type ProviderSpec, type ProviderCredentials } from '../api'
+import { api, type Credential, type CloudAccount, type CredKind, type Machine, type ProviderSpec, type ProviderCredentials, type Group, type CustomAction } from '../api'
 import { ago } from '../lib/format'
 import { useToast } from '../App'
 
@@ -8,14 +8,25 @@ export function Settings() {
   const [accounts, setAccounts] = useState<CloudAccount[]>([])
   const [providers, setProviders] = useState<ProviderSpec[]>([])
   const [machines, setMachines] = useState<Machine[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
+  const [customActions, setCustomActions] = useState<CustomAction[]>([])
   const toast = useToast()
 
   const reload = async () => {
-    const [c, a, p, m] = await Promise.all([api.credentials.list(), api.accounts.list(), api.providers(), api.machines.list()])
+    const [c, a, p, m, g, ca] = await Promise.all([
+      api.credentials.list(),
+      api.accounts.list(),
+      api.providers(),
+      api.machines.list(),
+      api.groups.list(),
+      api.customActions.list(),
+    ])
     setCreds(c)
     setAccounts(a)
     setProviders(p)
     setMachines(m)
+    setGroups(g)
+    setCustomActions(ca)
   }
   useEffect(() => {
     reload().catch((e) => toast(e.message, true))
@@ -34,7 +45,230 @@ export function Settings() {
       <Credentials creds={creds} onDone={reload} />
       <Accounts accounts={accounts} providers={providers} onDone={reload} />
       <LinkMachines machines={machines} creds={creds} onDone={reload} />
+      <Groups groups={groups} machines={machines} onDone={reload} />
+      <CustomActions actions={customActions} onDone={reload} />
     </>
+  )
+}
+
+// --- groups -------------------------------------------------------------------
+
+// A group is a set of tags; a machine belongs when it carries ALL of them.
+function Groups({ groups, machines, onDone }: { groups: Group[]; machines: Machine[]; onDone: () => Promise<void> }) {
+  const toast = useToast()
+  const [f, setF] = useState({ name: '', tags: '' })
+  const [busy, setBusy] = useState(false)
+  const allTags = Array.from(new Set(machines.flatMap((m) => m.tags))).sort()
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const tags = f.tags.split(',').map((t) => t.trim()).filter(Boolean)
+      const g = await api.groups.create({ name: f.name, tags })
+      toast(`Created group ${g.name}`)
+      setF({ name: '', tags: '' })
+      await onDone()
+    } catch (e: any) {
+      toast(e.message, true)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async (g: Group) => {
+    if (!confirm(`Delete group "${g.name}"? Machines and tags are untouched.`)) return
+    await api.groups.remove(g.id)
+    await onDone()
+  }
+
+  return (
+    <div className="section">
+      <h2>Groups</h2>
+      <div className="card">
+        {groups.length > 0 && (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Tags (all must match)</th>
+                  <th className="num">Members</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g) => (
+                  <tr key={g.id}>
+                    <td>
+                      <strong>{g.name}</strong>
+                    </td>
+                    <td>
+                      {g.tags.map((t) => (
+                        <span className="tag" key={t}>
+                          {t}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="num">{g.members}</td>
+                    <td className="actions">
+                      <button className="btn sm ghost" onClick={() => remove(g)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <form className="card-body form" onSubmit={submit} style={{ borderTop: groups.length ? '1px solid var(--line)' : 0 }}>
+          <div className="row" style={{ gap: 14 }}>
+            <div className="field grow">
+              <label>Name</label>
+              <input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="production EU" />
+            </div>
+            <div className="field grow">
+              <label>Tags (comma separated, ALL must match)</label>
+              <input className="input mono" required value={f.tags} onChange={(e) => setF({ ...f, tags: e.target.value })} placeholder="prod, eu" />
+            </div>
+          </div>
+          {allTags.length > 0 && <span className="hint">Tags in use: {allTags.join(', ')}</span>}
+          <div className="form-actions">
+            <button className="btn primary" disabled={busy}>
+              {busy ? 'Creating…' : 'Create group'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// --- custom actions -----------------------------------------------------------
+
+const TIERS = [
+  { v: 0, label: 'Tier 0 — read (runs on click)' },
+  { v: 1, label: 'Tier 1 — write (confirm once)' },
+  { v: 2, label: 'Tier 2 — disruptive (type machine name)' },
+]
+
+function CustomActions({ actions, onDone }: { actions: CustomAction[]; onDone: () => Promise<void> }) {
+  const toast = useToast()
+  const [f, setF] = useState({ label: '', category: 'custom', command: '', params: '', requires: '', sudo: '' as '' | 'preferred' | 'required', danger: 0 })
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const params = f.params.split(',').map((s) => s.trim()).filter(Boolean).map((name) => ({ name, label: name }))
+      const requires = f.requires.split(',').map((s) => s.trim()).filter(Boolean)
+      const a = await api.customActions.create({ label: f.label, category: f.category || 'custom', command: f.command, params, requires, sudo: f.sudo, danger: f.danger })
+      toast(`Saved ${a.id}`)
+      setF({ label: '', category: 'custom', command: '', params: '', requires: '', sudo: '', danger: 0 })
+      await onDone()
+    } catch (e: any) {
+      toast(e.message, true)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async (a: CustomAction) => {
+    if (!confirm(`Delete custom action "${a.label}"?`)) return
+    await api.customActions.remove(a.id)
+    await onDone()
+  }
+
+  return (
+    <div className="section">
+      <h2>Custom actions</h2>
+      <div className="card">
+        {actions.length > 0 && (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Label</th>
+                  <th>Command</th>
+                  <th>Tier</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {actions.map((a) => (
+                  <tr key={a.id}>
+                    <td>
+                      <strong>{a.label}</strong>
+                      <div className="muted mono" style={{ fontSize: 11 }}>{a.id}</div>
+                    </td>
+                    <td className="mono" style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {a.command}
+                    </td>
+                    <td>
+                      <span className={'chip ' + (a.danger >= 2 ? 'crit' : a.danger === 1 ? 'warn' : '')}>T{a.danger}</span>
+                    </td>
+                    <td className="actions">
+                      <button className="btn sm ghost" onClick={() => remove(a)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <form className="card-body form" onSubmit={submit} style={{ borderTop: actions.length ? '1px solid var(--line)' : 0 }}>
+          <div className="row" style={{ gap: 14 }}>
+            <div className="field grow">
+              <label>Label</label>
+              <input className="input" required value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} placeholder="Tail app log" />
+            </div>
+            <div className="field">
+              <label>Danger tier</label>
+              <select className="select" value={f.danger} onChange={(e) => setF({ ...f, danger: Number(e.target.value) })}>
+                {TIERS.map((t) => (
+                  <option key={t.v} value={t.v}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Command</label>
+            <input className="input mono" required value={f.command} onChange={(e) => setF({ ...f, command: e.target.value })} placeholder="tail -n 100 /var/log/{{app}}.log" />
+            <span className="hint">Reference params as {'{{name}}'}. Values are shell-quoted. Runs under sh on the host.</span>
+          </div>
+          <div className="row" style={{ gap: 14 }}>
+            <div className="field grow">
+              <label>Params (comma separated names)</label>
+              <input className="input mono" value={f.params} onChange={(e) => setF({ ...f, params: e.target.value })} placeholder="app" />
+            </div>
+            <div className="field grow">
+              <label>Requires capabilities (optional)</label>
+              <input className="input mono" value={f.requires} onChange={(e) => setF({ ...f, requires: e.target.value })} placeholder="docker" />
+            </div>
+            <div className="field">
+              <label>Sudo</label>
+              <select className="select" value={f.sudo} onChange={(e) => setF({ ...f, sudo: e.target.value as any })}>
+                <option value="">none</option>
+                <option value="preferred">preferred</option>
+                <option value="required">required</option>
+              </select>
+            </div>
+          </div>
+          <span className="hint">
+            Custom actions run as the SSH user on your own machines — you already have a terminal there. Tier 3 (destructive) is not allowed; use the terminal.
+          </span>
+          <div className="form-actions">
+            <button className="btn primary" disabled={busy}>
+              {busy ? 'Saving…' : 'Save action'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 

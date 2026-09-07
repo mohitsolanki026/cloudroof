@@ -153,6 +153,54 @@ export interface HostKey {
   seenFingerprint: string
 }
 
+export interface Group {
+  id: number
+  name: string
+  tags: string[]
+  createdAt: string
+  members: number
+}
+
+export interface CustomActionParam {
+  name: string
+  label: string
+}
+
+export interface CustomAction {
+  id: string
+  label: string
+  category: string
+  command: string
+  params: CustomActionParam[]
+  requires: string[]
+  sudo: SudoWant
+  danger: number
+  createdAt: string
+}
+
+export interface BulkResult {
+  machineId: number
+  machineName: string
+  ok: boolean
+  exitCode: number | null
+  error: string
+}
+
+export interface BulkResponse {
+  count: number
+  results: BulkResult[]
+}
+
+export interface CustomActionInput {
+  label: string
+  category: string
+  command: string
+  params: CustomActionParam[]
+  requires: string[]
+  sudo: SudoWant
+  danger: number
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -237,6 +285,24 @@ export const api = {
   },
   catalog: () => req<Action[]>('GET', '/api/catalog').then(normalizeActions),
   providers: () => req<ProviderSpec[]>('GET', '/api/providers'),
+  groups: {
+    list: () => req<Group[]>('GET', '/api/groups'),
+    create: (g: { name: string; tags: string[] }) => req<Group>('POST', '/api/groups', g),
+    remove: (id: number) => req<void>('DELETE', `/api/groups/${id}`),
+    machines: (id: number) => req<Machine[]>('GET', `/api/groups/${id}/machines`),
+  },
+  customActions: {
+    list: () => req<CustomAction[]>('GET', '/api/custom-actions'),
+    create: (a: CustomActionInput) => req<CustomAction>('POST', '/api/custom-actions', a),
+    remove: (id: string) => req<void>('DELETE', `/api/custom-actions/${encodeURIComponent(id)}`),
+  },
+  // Bulk runs one action across many machines. Call once without confirmation
+  // to get a 428 carrying the blast radius (count + names in ApiError.body),
+  // then again with confirm/confirmText.
+  bulk: (
+    actionId: string,
+    body: { machineIds?: number[]; groupId?: number | null; params?: Record<string, string>; confirm?: boolean; confirmText?: string },
+  ) => req<BulkResponse>('POST', `/api/bulk/actions/${encodeURIComponent(actionId)}`, body),
 }
 
 // hasCloud / hasHost mirror the Go methods, so the UI gates the same way the

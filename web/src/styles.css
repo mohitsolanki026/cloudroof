@@ -460,3 +460,19 @@ td.actions .btn { margin-left: 4px; }
 .seg-btn:last-child { border-right: 0; }
 .seg-btn:hover { color: var(--ink); background: var(--surface-2); }
 .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- bulk bar ---------- */
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+}
+.bulk-count { font-weight: 600; color: var(--accent-ink); font-size: 13.5px; }
+.bulk-hosts { display: flex; flex-wrap: wrap; gap: 5px; max-height: 160px; overflow-y: auto; margin: 4px 0; }

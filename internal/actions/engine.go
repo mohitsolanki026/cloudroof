@@ -59,6 +59,46 @@ func NewEngine(b *sshx.Broker, s *store.Store, r TargetResolver) *Engine {
 	return &Engine{broker: b, store: s, resolve: r}
 }
 
+// lookup resolves an action id against the built-in catalog first, then the
+// admin's saved custom actions. Built-ins always win a name clash.
+func (e *Engine) lookup(id string) (Action, bool) {
+	if a, ok := Lookup(id); ok {
+		return a, true
+	}
+	ca, err := e.store.GetCustomAction(id)
+	if err != nil {
+		return Action{}, false
+	}
+	return FromCustom(ca), true
+}
+
+// Resolve exposes action lookup (built-in + custom) to the API layer — e.g.
+// bulk needs an action's danger tier to gate before it runs anything.
+func (e *Engine) Resolve(id string) (Action, bool) { return e.lookup(id) }
+
+// FromCustom converts a stored custom action into an executable Action. Custom
+// params carry no regex (Pattern stays nil); render() falls back to a safe
+// free-text check for them. Output is always shown raw.
+func FromCustom(ca store.CustomAction) Action {
+	params := make([]Param, 0, len(ca.Params))
+	for _, p := range ca.Params {
+		params = append(params, Param{Name: p.Name, Label: p.Label})
+	}
+	cat := ca.Category
+	if cat == "" {
+		cat = "custom"
+	}
+	req := ca.Requires
+	if req == nil {
+		req = []string{}
+	}
+	return Action{
+		ID: ca.ID, Label: ca.Label, Category: cat,
+		Requires: req, Command: ca.Command, Params: params,
+		Danger: ca.Danger, Sudo: Sudo(ca.Sudo), Parse: "raw",
+	}
+}
+
 // Prepared is the resolved, gated, host-checked form of a request: what to
 // run, how, and where. Both Run (buffered) and the streaming handler build one
 // so the gate, the requires-check, the sudo decision, and the quoting live in
@@ -81,7 +121,7 @@ type Prepared struct {
 // everything needed to execute it, without touching the host except to unseal
 // the credential. It does not run anything and writes no audit row.
 func (e *Engine) Prepare(req Request) (Prepared, error) {
-	act, ok := Lookup(req.ActionID)
+	act, ok := e.lookup(req.ActionID)
 	if !ok {
 		return Prepared{}, ErrUnknownAction
 	}
@@ -238,8 +278,17 @@ func render(act Action, params map[string]string) (string, error) {
 		if !ok || v == "" {
 			return "", fmt.Errorf("%w: %s is required", ErrBadParam, p.Name)
 		}
-		if !p.Pattern.MatchString(v) {
-			return "", fmt.Errorf("%w: %s=%q", ErrBadParam, p.Name, v)
+		if p.Pattern != nil {
+			// Built-in param: an allowlist regex.
+			if !p.Pattern.MatchString(v) {
+				return "", fmt.Errorf("%w: %s=%q", ErrBadParam, p.Name, v)
+			}
+		} else if err := safeFreeParam(v); err != nil {
+			// Custom-action param: no author-supplied regex, so only reject
+			// what shell-quoting can't neutralize (control chars) or what is
+			// abusive (length). The single-quote wrapping below makes every
+			// remaining byte, quotes included, inert to the shell.
+			return "", fmt.Errorf("%w: %s: %v", ErrBadParam, p.Name, err)
 		}
 		cmd = strings.ReplaceAll(cmd, ph, shellQuote(v))
 	}
@@ -248,6 +297,21 @@ func render(act Action, params map[string]string) (string, error) {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// safeFreeParam validates a custom-action param value, which has no allowlist
+// regex. Shell-quoting handles injection; this only bars control characters
+// (which quoting does not neutralize) and caps the length.
+func safeFreeParam(v string) error {
+	if len(v) > 512 {
+		return fmt.Errorf("value too long (max 512)")
+	}
+	for _, r := range v {
+		if r < 0x20 && r != '\t' || r == 0x7f {
+			return fmt.Errorf("value contains a control character")
+		}
+	}
+	return nil
 }
 
 // applySudo decides whether to prefix `sudo -n` given what the action wants

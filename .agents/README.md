@@ -52,6 +52,7 @@ internal/provider/digitalocean/  token          (godo)
 internal/provider/amazon/        key pair       (aws-sdk-go-v2/ec2); id = "region:i-…"
 internal/provider/azure/         service principal (armcompute+armnetwork); id = full ARM resource id
 internal/provider/google/        service acct JSON (compute/v1); id = "project/zone/name"
+internal/provider/vultr/         token          (plain REST, no SDK); id = instance uuid
                       Each cmd/bosun/prov_*.go blank-imports one adapter behind
                       a build tag (no<name>) so it can be compiled out.
 internal/actions/     catalog.go = declarative Action list; engine.go = Prepare
@@ -119,15 +120,29 @@ web/src/pages/        Fleet, Machine (tabs), Activity, Settings.
   `RequestPty`, `Shell` and keepalive replies go through `withDeadline`,
   which drops the connection on expiry. Any new call into `*ssh.Client` or
   `*ssh.Session` that can block needs the same wrapper.
+- **Custom actions share the built-in execution path.** A saved action is
+  resolved by `engine.lookup` (built-ins win a name clash), converted with
+  `actions.FromCustom`, and run through the same gate/render/sudo/audit as a
+  built-in. Its params have no author regex, so `render` falls back to
+  `safeFreeParam` (control-char + length check) and still single-quotes.
+  Creation refuses danger 3 and the gate refuses it too — a custom Tier-3
+  button cannot exist. Output is always `raw`.
+- **Bulk escalates the gate, never bypasses it.** `runBulk` resolves targets
+  (a group or an explicit set, host-capable only), applies an escalated gate
+  (read → one confirm; write → type the host count, after a named preview),
+  then runs each machine through `engine.Run` with that machine's own name
+  satisfying the per-machine Tier-2 gate. Every host is audited as its own
+  Run. Concurrency is bounded (`bulkConcurrency`).
 - **Migrations are append-only — this is now load-bearing, not aspirational.**
   `store/schema.go` has two shipped migrations. 001 is frozen: it must match
   what v0.1 created. Editing 001 in place is exactly the bug that shipped the
   seen_* columns to fresh databases but not to existing ones (handshake failed
   with "no such column: seen_algorithm"); 002 repaired it with ALTER TABLE. Add
   a new string to the slice; never touch a shipped one. The runner
-  (`execMigration`) applies statements one at a time and treats "duplicate
-  column name" as already-applied, so a database from the brief inline-column
-  window upgrades cleanly too.
+  (`execMigration`) strips `--` comments (so a ';' in a comment can't split a
+  statement — that shipped as a bug in 003 and was fixed), applies statements
+  one at a time, and treats "duplicate column name" as already-applied. Three
+  migrations shipped: 001 base, 002 host-key seen_*, 003 groups + custom_actions.
 - **Streaming actions are Tier 0.** An `Action.Stream` action runs over the
   websocket in `stream.go`, not the buffered path, and `TestCatalogIntegrity`
   fails the build if a stream action is not read-tier. It still goes through
@@ -211,12 +226,12 @@ there.
 
 ## State of the build
 
-v1.1. Five providers (Hetzner, DigitalOcean, AWS EC2, Azure, GCP), each
-compile-out-able via build tags; systemd services, supervisor programs, docker
-containers, nginx/TLS web, the process/network/disk catalog; live log
-streaming; self-refreshing reachability; single admin user. No metrics
-history, no bulk actions, no groups — the next milestone. See the design doc's
-roadmap for what is deliberately excluded.
+v1.5. Six providers (Hetzner, DigitalOcean, AWS EC2, Azure, GCP, Vultr), each
+compile-out-able via build tags; the systemd/supervisor/docker/nginx/web/
+process/network/disk catalog; live log streaming; self-refreshing
+reachability; tag-based groups; bulk actions with escalated confirmation;
+saved custom actions; single admin user. No metrics history, no multi-user —
+later milestones. Linode was on the v1.5 roadmap but deliberately skipped.
 
 Known gaps to be honest about:
 - `processes.top` uses procps `ps` flags; BusyBox `ps` will return nothing useful.

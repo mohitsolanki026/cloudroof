@@ -115,4 +115,34 @@ var migrations = []string{
 	ALTER TABLE host_keys ADD COLUMN seen_algorithm   TEXT NOT NULL DEFAULT '';
 	ALTER TABLE host_keys ADD COLUMN seen_fingerprint TEXT NOT NULL DEFAULT '';
 	`,
+
+	// 003 — v1.5 "Fleet": tag-based groups that target bulk actions, and
+	// admin-authored saved custom actions.
+	`
+	-- A group is a set of tags. A machine belongs when it carries ALL of
+	-- them. Membership is resolved live from machines.tags, never stored, so
+	-- it stays correct as the fleet changes.
+	CREATE TABLE groups (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		name       TEXT    NOT NULL,
+		tags       TEXT    NOT NULL DEFAULT '',   -- comma-separated, ALL must match
+		created_at INTEGER NOT NULL
+	);
+
+	-- A custom action is a curated command the admin saved. It carries the
+	-- same shape as a built-in: a danger tier the gate enforces identically,
+	-- optional capability requirements, and templated params. danger is
+	-- constrained to 0..2 — a Tier-3 button never exists, built-in or custom.
+	CREATE TABLE custom_actions (
+		id         TEXT    PRIMARY KEY,           -- "custom.<slug>"
+		label      TEXT    NOT NULL,
+		category   TEXT    NOT NULL DEFAULT 'custom',
+		command    TEXT    NOT NULL,
+		params     TEXT    NOT NULL DEFAULT '[]', -- JSON [{name,label}]
+		requires   TEXT    NOT NULL DEFAULT '[]', -- JSON [capability]
+		sudo       TEXT    NOT NULL DEFAULT '',   -- '' | preferred | required
+		danger     INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL
+	);
+	`,
 }

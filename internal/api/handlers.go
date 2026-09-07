@@ -393,14 +393,42 @@ func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.store.GetFacts(id)
 	if errors.Is(err, store.ErrNotFound) {
-		writeJSON(w, 200, actions.Available(nil))
+		writeJSON(w, 200, s.availableActions(nil))
 		return
 	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, actions.Available(f.Capabilities))
+	writeJSON(w, 200, s.availableActions(f.Capabilities))
+}
+
+// availableActions merges the built-in catalog with saved custom actions,
+// filtered to what the host's capabilities satisfy.
+func (s *Server) availableActions(caps []string) []actions.Action {
+	out := actions.Available(caps)
+	customs, err := s.store.ListCustomActions()
+	if err != nil {
+		return out
+	}
+	have := make(map[string]bool, len(caps))
+	for _, c := range caps {
+		have[c] = true
+	}
+	for _, ca := range customs {
+		a := actions.FromCustom(ca)
+		ok := true
+		for _, req := range a.Requires {
+			if !have[req] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 type actionInput struct {

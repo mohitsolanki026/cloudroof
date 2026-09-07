@@ -151,3 +151,41 @@ type Run struct {
 	DurationMS  int64     `json:"durationMs"`
 	StartedAt   time.Time `json:"startedAt"`
 }
+
+// Group is a set of tags; a machine belongs when it carries ALL of them.
+// Membership is never stored — it is resolved live from each machine's tags,
+// so it tracks the fleet as tags change.
+type Group struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"createdAt"`
+	// Members is filled by the API when listing; the number of machines that
+	// currently match. Not a stored column.
+	Members int `json:"members"`
+}
+
+// CustomActionParam is one templated input of a saved action. Unlike built-in
+// params it has no author-supplied regex: values are shell-quoted and length-
+// capped at render time, which is sufficient because the admin already has a
+// full terminal on the box.
+type CustomActionParam struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+// CustomAction is an admin-authored command saved to run as a button. It maps
+// to the same execution path as a built-in action; the danger tier it declares
+// is enforced by the same gate. Stored raw here; the actions package converts
+// it to an actions.Action.
+type CustomAction struct {
+	ID        string              `json:"id"`
+	Label     string              `json:"label"`
+	Category  string              `json:"category"`
+	Command   string              `json:"command"`
+	Params    []CustomActionParam `json:"params"`
+	Requires  []string            `json:"requires"`
+	Sudo      string              `json:"sudo"` // "" | preferred | required
+	Danger    int                 `json:"danger"`
+	CreatedAt time.Time           `json:"createdAt"`
+}

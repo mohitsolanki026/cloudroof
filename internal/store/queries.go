@@ -658,3 +658,175 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "\n… truncated"
 }
+
+// --- groups -----------------------------------------------------------------
+
+func (s *Store) CreateGroup(g Group) (Group, error) {
+	g.CreatedAt = time.Now().UTC()
+	res, err := s.db.Exec(
+		`INSERT INTO groups (name, tags, created_at) VALUES (?, ?, ?)`,
+		g.Name, joinTags(g.Tags), ms(g.CreatedAt),
+	)
+	if err != nil {
+		return g, fmt.Errorf("store: create group: %w", err)
+	}
+	g.ID, _ = res.LastInsertId()
+	return g, nil
+}
+
+func (s *Store) ListGroups() ([]Group, error) {
+	rows, err := s.db.Query(`SELECT id, name, tags, created_at FROM groups ORDER BY name COLLATE NOCASE`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list groups: %w", err)
+	}
+	defer rows.Close()
+	out := []Group{}
+	for rows.Next() {
+		g, err := scanGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetGroup(id int64) (Group, error) {
+	row := s.db.QueryRow(`SELECT id, name, tags, created_at FROM groups WHERE id = ?`, id)
+	g, err := scanGroup(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return g, ErrNotFound
+	}
+	return g, err
+}
+
+func (s *Store) DeleteGroup(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM groups WHERE id = ?`, id)
+	return err
+}
+
+// GroupMembers resolves a group to the machines that carry ALL of its tags.
+// A group with no tags matches nothing (rather than everything) — an empty
+// group targeting the whole fleet would be a footgun for bulk actions.
+func (s *Store) GroupMembers(id int64) ([]Machine, error) {
+	g, err := s.GetGroup(id)
+	if err != nil {
+		return nil, err
+	}
+	all, err := s.ListMachines()
+	if err != nil {
+		return nil, err
+	}
+	return matchAll(all, g.Tags), nil
+}
+
+// matchAll returns machines that carry every tag in want. Empty want matches
+// nothing.
+func matchAll(machines []Machine, want []string) []Machine {
+	if len(want) == 0 {
+		return []Machine{}
+	}
+	out := []Machine{}
+	for _, m := range machines {
+		have := make(map[string]bool, len(m.Tags))
+		for _, t := range m.Tags {
+			have[t] = true
+		}
+		ok := true
+		for _, w := range want {
+			if !have[w] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func scanGroup(r scanner) (Group, error) {
+	var g Group
+	var tags string
+	var created int64
+	if err := r.Scan(&g.ID, &g.Name, &tags, &created); err != nil {
+		return g, err
+	}
+	g.Tags = splitTags(tags)
+	g.CreatedAt = fromMs(created)
+	return g, nil
+}
+
+// --- custom actions ---------------------------------------------------------
+
+func (s *Store) CreateCustomAction(a CustomAction) (CustomAction, error) {
+	a.CreatedAt = time.Now().UTC()
+	if a.Params == nil {
+		a.Params = []CustomActionParam{}
+	}
+	if a.Requires == nil {
+		a.Requires = []string{}
+	}
+	params, _ := json.Marshal(a.Params)
+	requires, _ := json.Marshal(a.Requires)
+	_, err := s.db.Exec(
+		`INSERT INTO custom_actions (id, label, category, command, params, requires, sudo, danger, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.Label, a.Category, a.Command, string(params), string(requires), a.Sudo, a.Danger, ms(a.CreatedAt),
+	)
+	if err != nil {
+		return a, fmt.Errorf("store: create custom action: %w", err)
+	}
+	return a, nil
+}
+
+const customActionCols = `id, label, category, command, params, requires, sudo, danger, created_at`
+
+func (s *Store) ListCustomActions() ([]CustomAction, error) {
+	rows, err := s.db.Query(`SELECT ` + customActionCols + ` FROM custom_actions ORDER BY category, label`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list custom actions: %w", err)
+	}
+	defer rows.Close()
+	out := []CustomAction{}
+	for rows.Next() {
+		a, err := scanCustomAction(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetCustomAction(id string) (CustomAction, error) {
+	row := s.db.QueryRow(`SELECT `+customActionCols+` FROM custom_actions WHERE id = ?`, id)
+	a, err := scanCustomAction(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, ErrNotFound
+	}
+	return a, err
+}
+
+func (s *Store) DeleteCustomAction(id string) error {
+	_, err := s.db.Exec(`DELETE FROM custom_actions WHERE id = ?`, id)
+	return err
+}
+
+func scanCustomAction(r scanner) (CustomAction, error) {
+	var a CustomAction
+	var params, requires string
+	var created int64
+	if err := r.Scan(&a.ID, &a.Label, &a.Category, &a.Command, &params, &requires, &a.Sudo, &a.Danger, &created); err != nil {
+		return a, err
+	}
+	if err := json.Unmarshal([]byte(params), &a.Params); err != nil {
+		a.Params = []CustomActionParam{}
+	}
+	if err := json.Unmarshal([]byte(requires), &a.Requires); err != nil {
+		a.Requires = []string{}
+	}
+	a.CreatedAt = fromMs(created)
+	return a, nil
+}

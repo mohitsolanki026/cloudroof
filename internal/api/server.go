@@ -115,6 +115,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.deleteAccount)
 	mux.HandleFunc("POST /api/accounts/{id}/sync", s.syncAccount)
 
+	// Groups & bulk
+	mux.HandleFunc("GET /api/groups", s.listGroups)
+	mux.HandleFunc("POST /api/groups", s.createGroup)
+	mux.HandleFunc("DELETE /api/groups/{id}", s.deleteGroup)
+	mux.HandleFunc("GET /api/groups/{id}/machines", s.groupMachines)
+	mux.HandleFunc("POST /api/bulk/actions/{action}", s.runBulk)
+
+	// Custom actions
+	mux.HandleFunc("GET /api/custom-actions", s.listCustomActions)
+	mux.HandleFunc("POST /api/custom-actions", s.createCustomAction)
+	mux.HandleFunc("DELETE /api/custom-actions/{id}", s.deleteCustomAction)
+
 	// Audit & metadata
 	mux.HandleFunc("GET /api/runs", s.listRuns)
 	mux.HandleFunc("GET /api/catalog", s.catalog)

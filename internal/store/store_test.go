@@ -172,3 +172,79 @@ func TestUpsertFollowsPublicIP(t *testing.T) {
 		t.Fatalf("public_ip should still refresh: %q", m.PublicIP)
 	}
 }
+
+func TestGroupsMatchAll(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	mk := func(name string, tags ...string) {
+		if _, err := s.CreateMachine(Machine{Name: name, Tags: tags, SSHHost: "h", SSHUser: "u"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("db1", "prod", "eu", "pg")
+	mk("api2", "prod", "us")
+	mk("web3", "prod", "eu", "nginx")
+	mk("dev4", "dev")
+
+	g, err := s.CreateGroup(Group{Name: "prod-eu", Tags: []string{"prod", "eu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := s.GroupMembers(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, m := range members {
+		got[m.Name] = true
+	}
+	if len(members) != 2 || !got["db1"] || !got["web3"] {
+		t.Fatalf("ALL-tags match wrong: %v", got)
+	}
+
+	// A tagless group matches nothing, never everything.
+	g2, _ := s.CreateGroup(Group{Name: "empty", Tags: nil})
+	m2, _ := s.GroupMembers(g2.ID)
+	if len(m2) != 0 {
+		t.Fatalf("tagless group should match nothing, got %d", len(m2))
+	}
+}
+
+func TestCustomActionRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	in := CustomAction{
+		ID: "custom.tail", Label: "Tail", Category: "custom",
+		Command:  "tail -n 100 {{path}}",
+		Params:   []CustomActionParam{{Name: "path", Label: "Path"}},
+		Requires: []string{}, Sudo: "preferred", Danger: 1,
+	}
+	if _, err := s.CreateCustomAction(in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetCustomAction("custom.tail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != in.Command || got.Danger != 1 || got.Sudo != "preferred" || len(got.Params) != 1 || got.Params[0].Name != "path" {
+		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	list, _ := s.ListCustomActions()
+	if len(list) != 1 {
+		t.Fatalf("want 1 custom action, got %d", len(list))
+	}
+	if err := s.DeleteCustomAction("custom.tail"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetCustomAction("custom.tail"); err == nil {
+		t.Fatal("expected not-found after delete")
+	}
+}

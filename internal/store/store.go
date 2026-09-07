@@ -101,7 +101,18 @@ func (s *Store) migrate() error {
 // so a database created in that window already has them when migration 002
 // tries to add them. "duplicate column name" there is success, not failure.
 func execMigration(tx *sql.Tx, stmt string) error {
-	for _, raw := range strings.Split(stmt, ";") {
+	// Strip line comments first: a ';' inside a comment would otherwise split
+	// a statement in two. Our DDL never puts "--" inside a string literal, so
+	// cutting each line at "--" is safe.
+	var clean strings.Builder
+	for _, line := range strings.Split(stmt, "\n") {
+		if i := strings.Index(line, "--"); i >= 0 {
+			line = line[:i]
+		}
+		clean.WriteString(line)
+		clean.WriteByte('\n')
+	}
+	for _, raw := range strings.Split(clean.String(), ";") {
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
