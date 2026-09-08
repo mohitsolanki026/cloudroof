@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"cloudroof/internal/actions"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/actions"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 type customActionInput struct {

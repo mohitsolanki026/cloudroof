@@ -26,10 +26,10 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 
-	"cloudroof/internal/actions"
-	"cloudroof/internal/keyring"
-	"cloudroof/internal/sshx"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/actions"
+	"github.com/mohitsolanki026/cloudroof/internal/keyring"
+	"github.com/mohitsolanki026/cloudroof/internal/sshx"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 type Server struct {

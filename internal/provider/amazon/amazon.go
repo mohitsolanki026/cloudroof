@@ -25,8 +25,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"cloudroof/internal/provider"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/provider"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 const Name = "aws"

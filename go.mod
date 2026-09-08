@@ -1,4 +1,4 @@
-module cloudroof
+module github.com/mohitsolanki026/cloudroof
 
 go 1.26.0
 

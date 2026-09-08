@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"cloudroof/internal/sshx"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/sshx"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 // script emits one key=value per line. It is POSIX sh — no bashisms — because

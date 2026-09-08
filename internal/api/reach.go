@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"cloudroof/internal/sshx"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/sshx"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 // sshExit0 is the cheapest possible liveness command: read the script, exit 0.

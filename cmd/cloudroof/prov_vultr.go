@@ -6,4 +6,4 @@
 // Package main: Vultr adapter registration (compile out with -tags novultr).
 package main
 
-import _ "cloudroof/internal/provider/vultr"
+import _ "github.com/mohitsolanki026/cloudroof/internal/provider/vultr"

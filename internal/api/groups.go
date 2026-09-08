@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 // A group is a named set of tags; its members are the machines carrying ALL of

@@ -18,8 +18,8 @@ import (
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 
-	"cloudroof/internal/provider"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/provider"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 const Name = "gcp"

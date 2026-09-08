@@ -6,4 +6,4 @@
 // Package main: DigitalOcean adapter registration (compile out with -tags nodo).
 package main
 
-import _ "cloudroof/internal/provider/digitalocean"
+import _ "github.com/mohitsolanki026/cloudroof/internal/provider/digitalocean"

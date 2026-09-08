@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"cloudroof/internal/actions"
-	"cloudroof/internal/store"
+	"github.com/mohitsolanki026/cloudroof/internal/actions"
+	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
 // Bulk runs one action across many machines — a group, or an explicit set.

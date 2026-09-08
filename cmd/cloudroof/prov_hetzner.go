@@ -6,4 +6,4 @@
 // Package main: Hetzner adapter registration (compile out with -tags nohetzner).
 package main
 
-import _ "cloudroof/internal/provider/hetzner"
+import _ "github.com/mohitsolanki026/cloudroof/internal/provider/hetzner"

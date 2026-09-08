@@ -6,4 +6,4 @@
 // Package main: AWS EC2 adapter registration (compile out with -tags noaws).
 package main
 
-import _ "cloudroof/internal/provider/amazon"
+import _ "github.com/mohitsolanki026/cloudroof/internal/provider/amazon"
