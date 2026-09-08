@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package sshx is the connection broker: it owns one pooled SSH client per
 // machine and multiplexes both non-interactive exec (for actions) and PTY
 // sessions (for the terminal) over it.

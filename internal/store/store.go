@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package store is the SQLite persistence layer.
 //
 // At the fleet sizes CloudRoof targets (1–20 machines) SQLite is not a compromise:

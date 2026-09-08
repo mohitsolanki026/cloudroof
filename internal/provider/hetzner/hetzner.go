@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package hetzner adapts Hetzner Cloud to the provider interface.
 //
 // Hetzner is the first adapter because its API is the simplest of the

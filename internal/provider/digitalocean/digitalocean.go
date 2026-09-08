@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package digitalocean adapts DigitalOcean Droplets to the provider interface.
 //
 // Same shape as Hetzner — one bearer token, flat instance list — which is

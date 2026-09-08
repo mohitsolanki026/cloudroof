@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package web embeds the built frontend so the final binary is self-contained.
 //
 // `make web` populates dist/. The all: prefix includes dotfiles, which lets a

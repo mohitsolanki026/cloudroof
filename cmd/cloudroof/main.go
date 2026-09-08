@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Command cloudroof is the self-hosted control plane: one binary, one data
 // directory, one port.
 package main

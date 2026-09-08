@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package actions is the declarative catalog and the engine that runs it.
 //
 // The catalog is data, not code. Each Action says what capability it needs,

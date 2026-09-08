@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package provider defines the narrow adapter interface every cloud must
 // implement, and a registry to construct one by name.
 //

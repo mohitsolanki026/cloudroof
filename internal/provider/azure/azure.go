@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package azure adapts Azure Virtual Machines to the provider interface.
 //
 // Auth is a service principal (tenant + client id/secret) scoped to one

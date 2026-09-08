@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package google adapts Google Compute Engine to the provider interface.
 //
 // Credentials are a service-account key JSON. Instances live in zones within

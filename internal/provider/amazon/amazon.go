@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package amazon adapts AWS EC2 to the provider interface.
 //
 // EC2 is the adapter that stress-tests the abstraction: credentials are a key

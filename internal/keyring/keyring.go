@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package keyring seals and opens secrets at rest.
 //
 // CloudRoof stores SSH private keys and cloud API tokens. Those are the crown

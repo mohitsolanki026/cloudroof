@@ -306,3 +306,10 @@ Run both after any change to sshx, actions, facts, providers, or api.
 One behavior the suite pinned down: **probe always drops the pooled connection
 first** (`probeMachine`). A reused connection never re-checks the host key or
 auth; a probe has to.
+
+## License
+
+AGPL-3.0-only (`LICENSE`), dual-licensed for a commercial tier. Keep source
+files' `SPDX-License-Identifier: AGPL-3.0-only` header; new Go files should
+carry it (below the `//go:build` line where present). Contributions are under
+the DCO — see `CONTRIBUTING.md`.

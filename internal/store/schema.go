@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 package store
 
 // migrations are applied in order and recorded in schema_migrations. Never edit

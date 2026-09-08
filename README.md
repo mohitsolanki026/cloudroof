@@ -142,3 +142,13 @@ systemd / supervisor / docker / nginx catalog; live log streaming;
 self-refreshing reachability; tag-based groups, bulk actions, and saved custom
 actions; single admin user; one-command install. No metrics history yet, and
 no multi-user — those are later milestones.
+
+## License
+
+CloudRoof is licensed under the **GNU Affero General Public License v3.0 only**
+(AGPL-3.0-only) — see [LICENSE](LICENSE). In short: you may run, study, modify,
+and share it freely, but if you modify it and offer it to others over a network,
+you must offer them your modified source too.
+
+A separate **commercial license** is available for organizations that cannot use
+AGPL software — contact the maintainer.

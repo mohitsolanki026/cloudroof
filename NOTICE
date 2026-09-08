@@ -1,0 +1,24 @@
+CloudRoof
+Copyright (C) 2026 Mohit Solanki
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3 only
+(AGPL-3.0-only), as published by the Free Software Foundation. See the LICENSE
+file for the full text.
+
+This program is distributed WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+license for details.
+
+Commercial licensing
+--------------------
+CloudRoof is also offered under a separate commercial license for organizations
+that cannot accept the AGPL's terms (for example, running a modified version as
+a network service without publishing the changes). Contact the maintainer.
+
+Third-party components
+----------------------
+CloudRoof links Go and JavaScript libraries that remain under their own
+licenses — predominantly Apache-2.0, BSD-3-Clause, and MIT. The authoritative
+lists are go.mod / go.sum and web/package-lock.json; run
+`go-licenses report ./...` for a full attribution report.

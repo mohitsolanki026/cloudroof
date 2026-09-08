@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package api is the HTTP surface: REST for everything, one websocket for the
 // terminal, and the embedded frontend.
 //

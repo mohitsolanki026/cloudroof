@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package config resolves runtime configuration from flags, environment, and
 // sensible defaults. CloudRoof is self-hosted and expected to run with zero
 // configuration, so every value here has a working default.

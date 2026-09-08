@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package vultr adapts Vultr to the provider interface.
 //
 // Vultr's v2 API is a simple bearer-token REST surface, so this talks to it

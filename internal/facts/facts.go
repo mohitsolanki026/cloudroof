@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Mohit Solanki
+
 // Package facts fingerprints a host on first connect.
 //
 // The result drives the entire UI: an action is only rendered if the host
