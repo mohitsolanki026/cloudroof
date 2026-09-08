@@ -15,8 +15,8 @@ import (
 	"sort"
 	"time"
 
-	"bosun/internal/provider"
-	"bosun/internal/store"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/store"
 )
 
 const Name = "vultr"

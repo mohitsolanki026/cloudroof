@@ -1,5 +1,5 @@
 // Package config resolves runtime configuration from flags, environment, and
-// sensible defaults. Bosun is self-hosted and expected to run with zero
+// sensible defaults. CloudRoof is self-hosted and expected to run with zero
 // configuration, so every value here has a working default.
 package config
 
@@ -45,12 +45,12 @@ func (c Config) BindsLoopback() bool {
 }
 
 // DBPath is the SQLite database file.
-func (c Config) DBPath() string { return filepath.Join(c.DataDir, "bosun.db") }
+func (c Config) DBPath() string { return filepath.Join(c.DataDir, "cloudroof.db") }
 
 // Load parses flags and environment into a Config, creating the data directory
 // if it does not exist.
 func Load(args []string) (Config, error) {
-	fs := flag.NewFlagSet("bosun", flag.ContinueOnError)
+	fs := flag.NewFlagSet("cloudroof", flag.ContinueOnError)
 
 	var c Config
 	var hosts string
@@ -58,10 +58,10 @@ func Load(args []string) (Config, error) {
 	// every interface would hand root-capable actions to the whole network.
 	// Exposing it is an explicit opt-in (-addr 0.0.0.0:7070 or a LAN IP),
 	// ideally behind a reverse proxy that adds auth and TLS.
-	fs.StringVar(&c.Addr, "addr", envOr("BOSUN_ADDR", "127.0.0.1:7070"), "listen address (loopback by default)")
-	fs.StringVar(&hosts, "hosts", envOr("BOSUN_HOSTS", ""), "comma-separated hostnames the UI is reached on, e.g. bosun.lan,10.0.0.5 (Host-header allowlist; loopback is always allowed)")
-	fs.StringVar(&c.DataDir, "data", envOr("BOSUN_DATA", defaultDataDir()), "data directory")
-	fs.BoolVar(&c.Dev, "dev", os.Getenv("BOSUN_DEV") != "", "serve frontend from ./web/dist instead of embedded bundle")
+	fs.StringVar(&c.Addr, "addr", envOr("CLOUDROOF_ADDR", "127.0.0.1:7070"), "listen address (loopback by default)")
+	fs.StringVar(&hosts, "hosts", envOr("CLOUDROOF_HOSTS", ""), "comma-separated hostnames the UI is reached on, e.g. cloudroof.lan,10.0.0.5 (Host-header allowlist; loopback is always allowed)")
+	fs.StringVar(&c.DataDir, "data", envOr("CLOUDROOF_DATA", defaultDataDir()), "data directory")
+	fs.BoolVar(&c.Dev, "dev", os.Getenv("CLOUDROOF_DEV") != "", "serve frontend from ./web/dist instead of embedded bundle")
 
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -73,7 +73,7 @@ func Load(args []string) (Config, error) {
 	}
 	c.DataDir = abs
 	c.MasterKeyPath = filepath.Join(c.DataDir, "master.key")
-	c.MasterKeyEnv = os.Getenv("BOSUN_MASTER_KEY")
+	c.MasterKeyEnv = os.Getenv("CLOUDROOF_MASTER_KEY")
 	for _, h := range strings.Split(hosts, ",") {
 		if h = strings.TrimSpace(h); h != "" {
 			c.Hosts = append(c.Hosts, h)
@@ -92,12 +92,12 @@ func defaultDataDir() string {
 	// Prefer XDG, fall back to a dot-directory, fall back to the working
 	// directory. The last case covers containers running without HOME set.
 	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "bosun")
+		return filepath.Join(dir, "cloudroof")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".bosun")
+		return filepath.Join(home, ".cloudroof")
 	}
-	return "./bosun-data"
+	return "./cloudroof-data"
 }
 
 func envOr(key, fallback string) string {

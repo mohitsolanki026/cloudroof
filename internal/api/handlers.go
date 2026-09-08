@@ -13,11 +13,11 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"bosun/internal/actions"
-	"bosun/internal/facts"
-	"bosun/internal/provider"
-	"bosun/internal/sshx"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/facts"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
 )
 
 const actor = "admin" // single-user in v0.1; multi-user lands in v2.5

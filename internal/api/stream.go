@@ -9,8 +9,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"bosun/internal/actions"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/store"
 )
 
 // streamAction runs a follow action (journalctl -f, docker logs -f,

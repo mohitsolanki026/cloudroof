@@ -15,8 +15,8 @@ import (
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 
-	"bosun/internal/provider"
-	"bosun/internal/store"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/store"
 )
 
 const Name = "hetzner"
@@ -33,7 +33,7 @@ func init() {
 		return &Hetzner{
 			client: hcloud.NewClient(
 				hcloud.WithToken(c.Token),
-				hcloud.WithApplication("bosun", "1.0"),
+				hcloud.WithApplication("cloudroof", "1.0"),
 				// Callers pass contexts, but a client-level ceiling guards
 				// the one path (hcloud's own retries) that outlives them.
 				hcloud.WithHTTPClient(&http.Client{Timeout: 45 * time.Second}),

@@ -1,6 +1,6 @@
 // Package keyring seals and opens secrets at rest.
 //
-// Bosun stores SSH private keys and cloud API tokens. Those are the crown
+// CloudRoof stores SSH private keys and cloud API tokens. Those are the crown
 // jewels of a user's fleet, so they are encrypted with AES-256-GCM under a
 // master key that lives outside the database. The database alone is useless to
 // an attacker; they need the key file too.
@@ -60,10 +60,10 @@ func loadOrCreate(path, envValue string) ([]byte, error) {
 	if envValue != "" {
 		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(envValue))
 		if err != nil {
-			return nil, fmt.Errorf("keyring: BOSUN_MASTER_KEY is not valid base64: %w", err)
+			return nil, fmt.Errorf("keyring: CLOUDROOF_MASTER_KEY is not valid base64: %w", err)
 		}
 		if len(key) != keyLen {
-			return nil, fmt.Errorf("keyring: BOSUN_MASTER_KEY must decode to %d bytes, got %d", keyLen, len(key))
+			return nil, fmt.Errorf("keyring: CLOUDROOF_MASTER_KEY must decode to %d bytes, got %d", keyLen, len(key))
 		}
 		return key, nil
 	}

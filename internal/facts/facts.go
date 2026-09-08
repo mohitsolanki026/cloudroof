@@ -1,7 +1,7 @@
 // Package facts fingerprints a host on first connect.
 //
 // The result drives the entire UI: an action is only rendered if the host
-// advertised the capability it needs. This is what lets Bosun not assume
+// advertised the capability it needs. This is what lets CloudRoof not assume
 // anything about the distro, the init system, or whether sudo works.
 package facts
 
@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"bosun/internal/sshx"
-	"bosun/internal/store"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
 )
 
 // script emits one key=value per line. It is POSIX sh — no bashisms — because

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"bosun/internal/store"
+	"cloudroof/internal/store"
 )
 
 // A group is a named set of tags; its members are the machines carrying ALL of

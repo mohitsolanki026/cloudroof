@@ -1,6 +1,6 @@
 .PHONY: all web build slim run dev test e2e release clean docker
 
-BIN     := bin/bosun
+BIN     := bin/cloudroof
 VERSION ?= 1.5.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
@@ -12,14 +12,14 @@ web:
 
 # Single static binary. CGO is off because the SQLite driver is pure Go.
 build:
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/bosun
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/cloudroof
 
 # Providers are opt-out via build tags (no<name>): nohetzner nodo noaws
 # noazure nogcp. `slim` keeps only the token-simple providers, which drops the
 # heavy AWS/Azure/GCP SDKs and roughly quarters the binary.
 SLIM_TAGS ?= noaws noazure nogcp
 slim:
-	CGO_ENABLED=0 go build -trimpath -tags "$(SLIM_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/bosun
+	CGO_ENABLED=0 go build -trimpath -tags "$(SLIM_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/cloudroof
 
 run: build
 	$(BIN) -data ./data
@@ -27,7 +27,7 @@ run: build
 # Backend with the frontend served from web/dist on disk; pair with `npm run dev`
 # in web/ for hot reload (vite proxies /api to :7070).
 dev:
-	BOSUN_LOG=debug go run ./cmd/bosun -dev -data ./data
+	CLOUDROOF_LOG=debug go run ./cmd/cloudroof -dev -data ./data
 
 test:
 	go vet ./...
@@ -46,9 +46,9 @@ release: web
 		os=$${p%/*}; arch=$${p#*/}; \
 		echo "  building $$os/$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
-			go build -trimpath -ldflags "$(LDFLAGS)" -o dist/bosun ./cmd/bosun; \
-		tar -C dist -czf dist/bosun_$(VERSION)_$${os}_$${arch}.tar.gz bosun; \
-		rm -f dist/bosun; \
+			go build -trimpath -ldflags "$(LDFLAGS)" -o dist/cloudroof ./cmd/cloudroof; \
+		tar -C dist -czf dist/cloudroof_$(VERSION)_$${os}_$${arch}.tar.gz cloudroof; \
+		rm -f dist/cloudroof; \
 	done
 	@cd dist && sha256sum *.tar.gz > checksums.txt
 	@echo "release $(VERSION):" && ls -1 dist
@@ -58,4 +58,4 @@ clean:
 	touch web/dist/.gitkeep
 
 docker:
-	docker build -t bosun:$(VERSION) .
+	docker build -t cloudroof:$(VERSION) .

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"bosun/internal/sshx"
-	"bosun/internal/store"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
 )
 
 // Request is one execution ask from the API layer.

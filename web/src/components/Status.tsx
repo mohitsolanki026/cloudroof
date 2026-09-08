@@ -2,7 +2,7 @@ import type { Machine, PowerState, ReachState } from '../api'
 import { hasCloud, hasHost } from '../api'
 
 // Two dots, never one. Power is what the provider says; reach is what SSH saw.
-// Their disagreement is the most useful signal Bosun produces.
+// Their disagreement is the most useful signal CloudRoof produces.
 
 function powerClass(p: PowerState, linked: boolean): string {
   if (!linked) return 'off'

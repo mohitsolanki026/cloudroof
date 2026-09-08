@@ -1454,7 +1454,7 @@ function HostKeyWarning({ m, onTrusted }: { m: Machine; onTrusted: () => void })
   const trust = async () => {
     if (!k?.seenFingerprint) return
     const msg =
-      `The SSH host key for ${m.name} does not match the one Bosun pinned.\n\n` +
+      `The SSH host key for ${m.name} does not match the one CloudRoof pinned.\n\n` +
       `Pinned:  ${k.algorithm} ${k.fingerprint}\n` +
       `Seen:    ${k.seenAlgorithm} ${k.seenFingerprint}\n\n` +
       `Trust the new key only if you rebuilt this machine or rotated its keys yourself. ` +

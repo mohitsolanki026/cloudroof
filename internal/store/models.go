@@ -13,7 +13,7 @@ const (
 )
 
 // ReachState is what SSH actually observed. It is tracked separately from
-// PowerState on purpose — the two disagreeing is the most useful thing Bosun
+// PowerState on purpose — the two disagreeing is the most useful thing CloudRoof
 // can tell you.
 type ReachState string
 

@@ -9,8 +9,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"bosun/internal/actions"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/store"
 )
 
 // Wire protocol, kept deliberately dumb:

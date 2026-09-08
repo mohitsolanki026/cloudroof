@@ -104,7 +104,7 @@ export function Activity() {
       <div className="page-head">
         <div>
           <h1>Activity</h1>
-          <div className="sub">Append-only. Every command Bosun has run, including the ones that failed.</div>
+          <div className="sub">Append-only. Every command CloudRoof has run, including the ones that failed.</div>
         </div>
       </div>
       <div className="card">

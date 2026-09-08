@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"bosun/internal/provider"
-	"bosun/internal/store"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/store"
 )
 
 type syncResult struct {

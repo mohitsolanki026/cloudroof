@@ -3,4 +3,4 @@
 // Package main: Azure adapter registration (compile out with -tags noazure).
 package main
 
-import _ "bosun/internal/provider/azure"
+import _ "cloudroof/internal/provider/azure"

@@ -1,4 +1,4 @@
-module bosun
+module cloudroof
 
 go 1.26.0
 

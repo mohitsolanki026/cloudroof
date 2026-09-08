@@ -1,4 +1,4 @@
-// Typed client for the Bosun API. Types mirror internal/store/models.go and
+// Typed client for the CloudRoof API. Types mirror internal/store/models.go and
 // the handler DTOs in internal/api/handlers.go — keep them in sync by hand;
 // the surface is small enough that codegen would cost more than it saves.
 

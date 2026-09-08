@@ -15,8 +15,8 @@ import (
 	"github.com/digitalocean/godo"
 	"golang.org/x/oauth2"
 
-	"bosun/internal/provider"
-	"bosun/internal/store"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/store"
 )
 
 const Name = "digitalocean"
@@ -34,7 +34,7 @@ func init() {
 		hc := oauth2.NewClient(context.Background(), ts)
 		hc.Timeout = 45 * time.Second
 		client := godo.NewClient(hc)
-		client.UserAgent = "bosun/1.0"
+		client.UserAgent = "cloudroof/1.0"
 		return &DO{client: client}, nil
 	})
 }

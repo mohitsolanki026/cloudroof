@@ -22,8 +22,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"bosun/internal/provider"
-	"bosun/internal/store"
+	"cloudroof/internal/provider"
+	"cloudroof/internal/store"
 )
 
 const Name = "aws"
@@ -41,7 +41,7 @@ func init() {
 			{Name: "regions", Label: "Regions", Kind: provider.FieldList, Optional: true,
 				Hint: "Comma-separated, e.g. eu-central-1, us-east-1. Leave empty to scan every region enabled on the account."},
 		},
-		Notes: "Create an IAM user with only ec2:DescribeInstances, ec2:DescribeRegions, ec2:StartInstances, ec2:StopInstances, ec2:RebootInstances. Bosun never needs anything else.",
+		Notes: "Create an IAM user with only ec2:DescribeInstances, ec2:DescribeRegions, ec2:StartInstances, ec2:StopInstances, ec2:RebootInstances. CloudRoof never needs anything else.",
 	}, func(c provider.Credentials) (provider.Provider, error) {
 		regions := make([]string, 0, len(c.Regions))
 		for _, r := range c.Regions {

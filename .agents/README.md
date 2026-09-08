@@ -1,11 +1,11 @@
-# Bosun — brief for agents and models
+# CloudRoof — brief for agents and models
 
 Read this first. It says what the project is, how it is laid out, and the
 rules that are not obvious from the code.
 
 ## What this is
 
-**Bosun** is a self-hosted, agentless dashboard for small fleets (1–20) of
+**CloudRoof** is a self-hosted, agentless dashboard for small fleets (1–20) of
 Linux machines across multiple cloud providers. One Go binary, one SQLite
 file, one port. It does two things and links them:
 
@@ -34,9 +34,9 @@ canonical statement of intent. Its principles are enforced in code:
 ## Layout
 
 ```
-cmd/bosun/            entrypoint; wires config → keyring → store → broker → api
-internal/config/      flags + env; data dir default ~/.config/bosun
-internal/keyring/     Seal / OpenSealed. Master key file 0600, or BOSUN_MASTER_KEY env.
+cmd/cloudroof/            entrypoint; wires config → keyring → store → broker → api
+internal/config/      flags + env; data dir default ~/.config/cloudroof
+internal/keyring/     Seal / OpenSealed. Master key file 0600, or CLOUDROOF_MASTER_KEY env.
 internal/store/       SQLite (modernc, pure Go). schema.go = migrations (append-only),
                       models.go = types, queries.go = all SQL.
 internal/sshx/        Connection broker. One pooled *ssh.Client per machine ID.
@@ -53,7 +53,7 @@ internal/provider/amazon/        key pair       (aws-sdk-go-v2/ec2); id = "regio
 internal/provider/azure/         service principal (armcompute+armnetwork); id = full ARM resource id
 internal/provider/google/        service acct JSON (compute/v1); id = "project/zone/name"
 internal/provider/vultr/         token          (plain REST, no SDK); id = instance uuid
-                      Each cmd/bosun/prov_*.go blank-imports one adapter behind
+                      Each cmd/cloudroof/prov_*.go blank-imports one adapter behind
                       a build tag (no<name>) so it can be compiled out.
 internal/actions/     catalog.go = declarative Action list; engine.go = Prepare
                       (gate → render → requires → sudo → resolve) shared by
@@ -192,12 +192,12 @@ the rendered command → `POST /api/machines/{id}/actions/{action}` with
 ## Running it
 
 ```
-make web && make build && ./bin/bosun -data ./data     # production-shaped
+make web && make build && ./bin/cloudroof -data ./data     # production-shaped
 make dev   # backend on :7070 serving web/dist from disk
 cd web && npm run dev   # vite on :5173 proxying /api → :7070
 ```
 
-Data dir holds `bosun.db` and `master.key`. Deleting `master.key` makes every
+Data dir holds `cloudroof.db` and `master.key`. Deleting `master.key` makes every
 stored credential unreadable; there is no recovery by design.
 
 ## Adding things
@@ -205,7 +205,7 @@ stored credential unreadable; there is no recovery by design.
 **A provider**: implement `provider.Provider` in
 `internal/provider/<name>/`, call `provider.Register(Spec, Factory)` in
 `init()` with the credential fields the UI should render, and add a
-`cmd/bosun/prov_<name>.go` that blank-imports it behind a `//go:build !no<name>`
+`cmd/cloudroof/prov_<name>.go` that blank-imports it behind a `//go:build !no<name>`
 tag. Add any new credential fields to `provider.Credentials` (+ `Get`/`Empty`).
 Map the provider's states onto `store.PowerState` and its power calls onto the
 five `PowerAction`s; encode whatever addressing it needs (region, zone,
@@ -291,7 +291,7 @@ browser guard (415 on non-JSON, 403 on foreign Origin / cross-site, 421 on
 unknown Host, same-origin passes); probe pins a key equal to sshd's real
 fingerprint; the catalog offered matches the host's capabilities; overview /
 services / processes / network (listening + established) / disk (usage +
-inodes) parse real output; `network.reach` hits Bosun's own health endpoint
+inodes) parse real output; `network.reach` hits CloudRoof's own health endpoint
 from the host; `web.tls_cert` on a non-TLS port reports `ok:false` not blanks;
 the three providers register with the AWS key-pair spec; `SudoPreferred` runs
 plain and `SudoRequired` is refused on a password-sudo host; every executed

@@ -23,10 +23,10 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 
-	"bosun/internal/actions"
-	"bosun/internal/keyring"
-	"bosun/internal/sshx"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/keyring"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
 )
 
 type Server struct {
@@ -276,7 +276,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		if !s.hostAllowed(r.Host) {
 			writeJSON(w, 421, apiError{
-				Error: fmt.Sprintf("bosun is not configured to serve on host %q — start it with -hosts %s", r.Host, hostOnly(r.Host)),
+				Error: fmt.Sprintf("cloudroof is not configured to serve on host %q — start it with -hosts %s", r.Host, hostOnly(r.Host)),
 				Code:  "bad_host",
 			})
 			return

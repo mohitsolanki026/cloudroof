@@ -1,4 +1,4 @@
-// Command bosun is the self-hosted control plane: one binary, one data
+// Command cloudroof is the self-hosted control plane: one binary, one data
 // directory, one port.
 package main
 
@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"bosun/internal/api"
-	"bosun/internal/config"
-	"bosun/internal/keyring"
-	"bosun/internal/sshx"
-	"bosun/internal/store"
-	"bosun/web"
+	"cloudroof/internal/api"
+	"cloudroof/internal/config"
+	"cloudroof/internal/keyring"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
+	"cloudroof/web"
 )
 
 var version = "dev"
@@ -26,12 +26,12 @@ var version = "dev"
 func main() {
 	for _, a := range os.Args[1:] {
 		if a == "-version" || a == "--version" {
-			fmt.Println("bosun", version)
+			fmt.Println("cloudroof", version)
 			return
 		}
 	}
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "bosun:", err)
+		fmt.Fprintln(os.Stderr, "cloudroof:", err)
 		os.Exit(1)
 	}
 }
@@ -73,7 +73,7 @@ func run(args []string) error {
 		// exposure -hosts exists to close.
 		opts.AllowAnyHost = true
 		log.Warn("listening on a non-loopback address with no -hosts allowlist; "+
-			"any Host header is accepted — set -hosts <name,ip> or put bosun behind a reverse proxy",
+			"any Host header is accepted — set -hosts <name,ip> or put cloudroof behind a reverse proxy",
 			"addr", cfg.Addr)
 	}
 	if cfg.Dev {
@@ -104,7 +104,7 @@ func run(args []string) error {
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Info("bosun listening", "version", version, "addr", cfg.Addr, "data", cfg.DataDir, "dev", cfg.Dev)
+	log.Info("cloudroof listening", "version", version, "addr", cfg.Addr, "data", cfg.DataDir, "dev", cfg.Dev)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -112,12 +112,12 @@ func run(args []string) error {
 	// finish draining before the deferred broker/db Close pull the floor out
 	// from under in-flight handlers.
 	<-shutdownDone
-	log.Info("bosun stopped")
+	log.Info("cloudroof stopped")
 	return nil
 }
 
 func logLevel() slog.Level {
-	switch os.Getenv("BOSUN_LOG") {
+	switch os.Getenv("CLOUDROOF_LOG") {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":

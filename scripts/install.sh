@@ -1,15 +1,15 @@
 #!/usr/bin/env sh
-# Bosun installer.  curl -sSL https://get.bosun.sh | sh
+# CloudRoof installer.  curl -sSL https://get.cloudroof.sh | sh
 #
 # Downloads the latest release binary for this OS/arch and installs it to
 # /usr/local/bin (or ~/.local/bin without root). Override:
-#   BOSUN_REPO   owner/repo to fetch from        (default bosun-sh/bosun)
-#   BOSUN_VERSION  tag to install                (default: latest)
-#   BOSUN_BIN_DIR  install directory
+#   CLOUDROOF_REPO   owner/repo to fetch from        (default cloudroof-sh/cloudroof)
+#   CLOUDROOF_VERSION  tag to install                (default: latest)
+#   CLOUDROOF_BIN_DIR  install directory
 set -eu
 
-REPO="${BOSUN_REPO:-bosun-sh/bosun}"
-VERSION="${BOSUN_VERSION:-latest}"
+REPO="${CLOUDROOF_REPO:-cloudroof-sh/cloudroof}"
+VERSION="${CLOUDROOF_VERSION:-latest}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -30,15 +30,15 @@ esac
 if [ "$VERSION" = latest ]; then
   VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
     | grep -m1 '"tag_name"' | cut -d'"' -f4) || true
-  [ -n "$VERSION" ] || die "could not resolve the latest release from github.com/$REPO — set BOSUN_VERSION, or build from source"
+  [ -n "$VERSION" ] || die "could not resolve the latest release from github.com/$REPO — set CLOUDROOF_VERSION, or build from source"
 fi
 ver="${VERSION#v}"
 
-tarball="bosun_${ver}_${os}_${arch}.tar.gz"
+tarball="cloudroof_${ver}_${os}_${arch}.tar.gz"
 url="https://github.com/$REPO/releases/download/$VERSION/$tarball"
 
 # Pick an install dir we can actually write to.
-if [ -n "${BOSUN_BIN_DIR:-}" ]; then bindir="$BOSUN_BIN_DIR"
+if [ -n "${CLOUDROOF_BIN_DIR:-}" ]; then bindir="$CLOUDROOF_BIN_DIR"
 elif [ -w /usr/local/bin ] 2>/dev/null; then bindir=/usr/local/bin
 elif [ "$(id -u)" = 0 ]; then bindir=/usr/local/bin
 else bindir="$HOME/.local/bin"; fi
@@ -49,12 +49,12 @@ trap 'rm -rf "$tmp"' EXIT
 say "Downloading $tarball …"
 curl -fSL "$url" -o "$tmp/$tarball" || die "download failed: $url"
 tar -C "$tmp" -xzf "$tmp/$tarball" || die "extract failed"
-install -m 0755 "$tmp/bosun" "$bindir/bosun" 2>/dev/null || { mv "$tmp/bosun" "$bindir/bosun"; chmod 0755 "$bindir/bosun"; }
+install -m 0755 "$tmp/cloudroof" "$bindir/cloudroof" 2>/dev/null || { mv "$tmp/cloudroof" "$bindir/cloudroof"; chmod 0755 "$bindir/cloudroof"; }
 
 say ""
-say "Installed bosun $VERSION to $bindir/bosun"
+say "Installed cloudroof $VERSION to $bindir/cloudroof"
 case ":$PATH:" in
   *":$bindir:"*) ;;
-  *) say "Note: $bindir is not on your PATH. Add it, or run $bindir/bosun directly." ;;
+  *) say "Note: $bindir is not on your PATH. Add it, or run $bindir/cloudroof directly." ;;
 esac
-say "Start it with:  bosun            # then open http://localhost:7070"
+say "Start it with:  cloudroof            # then open http://localhost:7070"

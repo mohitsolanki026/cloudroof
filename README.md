@@ -1,4 +1,4 @@
-# Bosun
+# CloudRoof
 
 One self-hosted dashboard for every Linux machine you own, across every cloud
 you rent from — power control from the provider API, and a button layer over
@@ -7,19 +7,19 @@ the commands you keep re-typing through SSH.
 Nothing is installed on your machines. No credential leaves your box.
 
 ```
-curl -sSL https://get.bosun.sh | sh && bosun
+curl -sSL https://get.cloudroof.sh | sh && cloudroof
 ```
 
 or with Docker:
 
 ```
-docker run -d -p 127.0.0.1:7070:7070 -v bosun:/data ghcr.io/bosun-sh/bosun
+docker run -d -p 127.0.0.1:7070:7070 -v cloudroof:/data ghcr.io/cloudroof-sh/cloudroof
 ```
 
 or from source:
 
 ```
-make web && make build && ./bin/bosun
+make web && make build && ./bin/cloudroof
 ```
 
 then open http://localhost:7070.
@@ -47,7 +47,7 @@ then open http://localhost:7070.
   check for any host:port.
 - **Disk** — largest directories, inode usage, journal vacuum, apt cache clean.
 - **Terminal** — a real shell on the pooled SSH connection.
-- **Activity** — every command Bosun has ever run, with output, append-only.
+- **Activity** — every command CloudRoof has ever run, with output, append-only.
 
 Tabs are drawn from what each host actually has: a box without Docker never
 shows a Containers tab, one without systemd never shows Services.
@@ -90,7 +90,7 @@ build time:
 
 ```
 make slim                              # drops AWS + Azure + GCP (~16 MB)
-go build -tags "noaws noazure" ./cmd/bosun   # any combination
+go build -tags "noaws noazure" ./cmd/cloudroof   # any combination
 ```
 
 Tags: `nohetzner nodo novultr noaws noazure nogcp`. A provider compiled out
@@ -108,18 +108,18 @@ disabled, never left to hang on a prompt, where it doesn't.
 
 ## Network exposure
 
-There is no login yet. Bosun therefore binds to `127.0.0.1:7070` by default,
+There is no login yet. CloudRoof therefore binds to `127.0.0.1:7070` by default,
 refuses requests whose `Host` header is not itself (DNS rebinding), and refuses
 cross-origin browser requests (CSRF). To reach it from another machine, opt in
 explicitly and name the hosts you will use:
 
 ```
-bosun -addr 0.0.0.0:7070 -hosts bosun.lan,10.0.0.5
-docker run -d -p 7070:7070 -e BOSUN_HOSTS=bosun.lan -v bosun:/data ghcr.io/bosun-sh/bosun
+cloudroof -addr 0.0.0.0:7070 -hosts cloudroof.lan,10.0.0.5
+docker run -d -p 7070:7070 -e CLOUDROOF_HOSTS=cloudroof.lan -v cloudroof:/data ghcr.io/cloudroof-sh/cloudroof
 ```
 
 Binding a network address without `-hosts` works but accepts any `Host` and
-logs a warning at startup. Put Bosun behind a reverse proxy that adds
+logs a warning at startup. Put CloudRoof behind a reverse proxy that adds
 authentication and TLS before exposing it beyond a trusted network. Multi-user
 auth is on the roadmap.
 

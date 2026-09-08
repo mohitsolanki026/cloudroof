@@ -13,17 +13,17 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /bosun ./cmd/bosun
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /cloudroof ./cmd/cloudroof
 
 # --- runtime ----------------------------------------------------------------
 # scratch would work (static binary) but we want CA certs for provider APIs
 # and a shell for `docker exec` debugging.
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata \
- && adduser -D -h /data -u 1000 bosun
-COPY --from=build /bosun /usr/local/bin/bosun
-USER bosun
+ && adduser -D -h /data -u 1000 cloudroof
+COPY --from=build /cloudroof /usr/local/bin/cloudroof
+USER cloudroof
 VOLUME /data
 EXPOSE 7070
-ENV BOSUN_ADDR=:7070 BOSUN_DATA=/data
-ENTRYPOINT ["bosun"]
+ENV CLOUDROOF_ADDR=:7070 CLOUDROOF_DATA=/data
+ENTRYPOINT ["cloudroof"]

@@ -1,6 +1,6 @@
 // Package store is the SQLite persistence layer.
 //
-// At the fleet sizes Bosun targets (1–20 machines) SQLite is not a compromise:
+// At the fleet sizes CloudRoof targets (1–20 machines) SQLite is not a compromise:
 // it needs no configuration, and the user's entire install backs up by copying
 // one file. That matters more than throughput here.
 package store

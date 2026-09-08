@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"bosun/internal/actions"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/store"
 )
 
 // Bulk runs one action across many machines — a group, or an explicit set.

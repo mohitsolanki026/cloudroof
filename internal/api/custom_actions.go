@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"bosun/internal/actions"
-	"bosun/internal/store"
+	"cloudroof/internal/actions"
+	"cloudroof/internal/store"
 )
 
 type customActionInput struct {

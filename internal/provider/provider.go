@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"bosun/internal/store"
+	"cloudroof/internal/store"
 )
 
 // PowerAction is the normalized set of power operations. Every supported

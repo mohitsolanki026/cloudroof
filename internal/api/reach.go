@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"bosun/internal/sshx"
-	"bosun/internal/store"
+	"cloudroof/internal/sshx"
+	"cloudroof/internal/store"
 )
 
 // sshExit0 is the cheapest possible liveness command: read the script, exit 0.

@@ -2,7 +2,7 @@
 # End-to-end test against a throwaway, unprivileged sshd on localhost.
 #
 # Touches nothing outside $E2E_DIR: generates its own host key, its own client
-# key, its own sshd_config, and only accepts that client key. Bosun runs with
+# key, its own sshd_config, and only accepts that client key. CloudRoof runs with
 # its own data dir. Everything is killed on exit.
 #
 # Needs: go, node >= 22 (native WebSocket), python3, /usr/sbin/sshd, ssh-keygen.
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=${E2E_DIR:-$(mktemp -d -t bosun-e2e.XXXXXX)}
+D=${E2E_DIR:-$(mktemp -d -t cloudroof-e2e.XXXXXX)}
 SSH_PORT=${E2E_SSH_PORT:-2222}
 API_PORT=${E2E_API_PORT:-7171}
 B="http://127.0.0.1:$API_PORT"
@@ -27,7 +27,7 @@ stop_sshd() {
 
 cleanup() {
   set +e
-  [[ -n "${BOSUN_PID:-}" ]] && kill "$BOSUN_PID" 2>/dev/null
+  [[ -n "${CLOUDROOF_PID:-}" ]] && kill "$CLOUDROOF_PID" 2>/dev/null
   stop_sshd
   wait 2>/dev/null
   [[ -z "${E2E_KEEP:-}" ]] && rm -rf "$D" || echo "kept $D"
@@ -39,14 +39,14 @@ node -e 'if (typeof WebSocket !== "function") process.exit(1)' || { echo "need n
 
 echo "== build =="
 (cd "$ROOT/web" && npm run build >/dev/null 2>&1) && echo "web ok"
-(cd "$ROOT" && CGO_ENABLED=0 go build -o "$D/bosun" ./cmd/bosun) && echo "go ok"
+(cd "$ROOT" && CGO_ENABLED=0 go build -o "$D/cloudroof" ./cmd/cloudroof) && echo "go ok"
 
 echo "== throwaway sshd on 127.0.0.1:$SSH_PORT =="
 # Start from empty: a reused E2E_DIR would otherwise make ssh-keygen prompt
 # to overwrite, and with no stdin that prompt fails under set -e.
-rm -rf "$D/sshd" "$D/data" "$D/client" "$D/client.pub" "$D/bosun.log" "$D/mid" "$D/fails1" "$D/fails3"
+rm -rf "$D/sshd" "$D/data" "$D/client" "$D/client.pub" "$D/cloudroof.log" "$D/mid" "$D/fails1" "$D/fails3"
 mkdir -p "$D/sshd" "$D/data"; chmod 700 "$D/sshd"
-ssh-keygen -q -t ed25519 -N '' -f "$D/client" -C bosun-e2e
+ssh-keygen -q -t ed25519 -N '' -f "$D/client" -C cloudroof-e2e
 ssh-keygen -q -t ed25519 -N '' -f "$D/sshd/hostkey"
 cp "$D/client.pub" "$D/sshd/authorized_keys"; chmod 600 "$D/sshd/authorized_keys"
 
@@ -75,9 +75,9 @@ write_sshd_config; start_sshd
 ssh -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes \
     -i "$D/client" -p "$SSH_PORT" "$USER@127.0.0.1" 'echo direct-ssh-ok'
 
-echo "== bosun on $B =="
-"$D/bosun" -addr "127.0.0.1:$API_PORT" -data "$D/data" > "$D/bosun.log" 2>&1 &
-BOSUN_PID=$!
+echo "== cloudroof on $B =="
+"$D/cloudroof" -addr "127.0.0.1:$API_PORT" -data "$D/data" > "$D/cloudroof.log" 2>&1 &
+CLOUDROOF_PID=$!
 for _ in $(seq 1 50); do curl -sf "$B/api/health" >/dev/null && break; sleep 0.1; done
 
 # ---------------------------------------------------------------------------
@@ -199,7 +199,7 @@ check("disk.largest (preferred) runs", st == 200 and isinstance(r["data"]["dirs"
 st, r = call("POST", f"/api/machines/{mid}/actions/processes.terminate", {"params": {"pid": "999999"}, "confirm": True, "confirmName": ""})
 check("processes.terminate (tier1, preferred) executes", st == 200 and r["run"]["exitCode"] not in (None, 0),
       f"exit={r['run']['exitCode'] if st == 200 else r}")
-st, r = call("POST", f"/api/machines/{mid}/actions/services.restart", {"params": {"unit": "bosun-e2e-nonexistent"}, "confirm": True, "confirmName": ""})
+st, r = call("POST", f"/api/machines/{mid}/actions/services.restart", {"params": {"unit": "cloudroof-e2e-nonexistent"}, "confirm": True, "confirmName": ""})
 if can_root: check("services.restart (required) executes with sudo", st == 200 and r["run"]["exitCode"] != 0)
 else: check("services.restart (required) refused without sudo", st == 409 and r["code"] == "not_available")
 
@@ -268,7 +268,7 @@ check("network.established parsed", st == 200 and isinstance(r["data"]["listener
 st, r = call("POST", f"/api/machines/{mid}/actions/disk.inodes")
 check("disk.inodes parsed", st == 200 and len(r["data"]["inodes"]) >= 1 and r["data"]["inodes"][0]["total"] > 0)
 st, r = call("POST", f"/api/machines/{mid}/actions/network.reach", {"params": {"url": f"http://127.0.0.1:{API_PORT}/api/health"}, "confirm": False, "confirmName": ""})
-check("network.reach hits bosun's own health from the host", st == 200 and "status=200" in r["data"]["text"])
+check("network.reach hits cloudroof's own health from the host", st == 200 and "status=200" in r["data"]["text"])
 st, r = call("POST", f"/api/machines/{mid}/actions/web.tls_cert", {"params": {"host": "127.0.0.1", "port": str(SSH_PORT)}, "confirm": False, "confirmName": ""})
 check("tls check on a non-TLS port reports ok=false, not blanks", st == 200 and r["data"]["ok"] is False)
 st, r = call("POST", f"/api/machines/{mid}/actions/network.reach", {"params": {"url": "ftp://nope"}, "confirm": False, "confirmName": ""})
@@ -300,11 +300,11 @@ ws.binaryType = "arraybuffer";
 const enc = new TextEncoder(), dec = new TextDecoder(); let buf = "", echoed = false;
 ws.onopen = () => setTimeout(() => {
   ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
-  ws.send(enc.encode('echo BOSUN-TERM-\$((40+2)); stty size\n'));
+  ws.send(enc.encode('echo CLOUDROOF-TERM-\$((40+2)); stty size\n'));
 }, 400);
 ws.onmessage = (e) => {
   buf += typeof e.data === "string" ? e.data : dec.decode(e.data);
-  if (!echoed && buf.includes("BOSUN-TERM-42")) { echoed = true; setTimeout(() => ws.send(enc.encode("exit\n")), 300); }
+  if (!echoed && buf.includes("CLOUDROOF-TERM-42")) { echoed = true; setTimeout(() => ws.send(enc.encode("exit\n")), 300); }
 };
 ws.onclose = (e) => {
   const m = buf.match(/\n(\d+) (\d+)\r?\n/);
@@ -349,7 +349,7 @@ import json,sys; ok = any(r["actionId"]=="services.journal_follow" for r in json
 print(("  ok   " if ok else "  FAIL ") + "stream open audited"); sys.exit(0 if ok else 1)'
 
 # ---------------------------------------------------------------------------
-# Phase 3: host key change — the machine is "rebuilt" (new host key). Bosun
+# Phase 3: host key change — the machine is "rebuilt" (new host key). CloudRoof
 # must refuse, record what it saw, reject a stale trust, accept the real one.
 # ---------------------------------------------------------------------------
 echo "-- host key change (machine rebuilt: all sessions gone, new host key) --"
@@ -398,5 +398,5 @@ sys.exit(1 if fails else 0)
 PY
 
 echo "-- server log: warnings/errors --"
-grep -E 'level=(WARN|ERROR)' "$D/bosun.log" || echo "  (none)"
+grep -E 'level=(WARN|ERROR)' "$D/cloudroof.log" || echo "  (none)"
 echo "== e2e passed =="

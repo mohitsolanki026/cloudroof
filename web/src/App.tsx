@@ -73,7 +73,7 @@ export function App() {
         <header className="topbar">
           <a className="brand" href="#/">
             <span className="dot ok" />
-            Bosun
+            CloudRoof
           </a>
           <nav className="nav">
             <a href="#/" className={path === '/' || path.startsWith('/machines') ? 'active' : ''}>
