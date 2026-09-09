@@ -1,7 +1,7 @@
 .PHONY: all web build slim run dev test e2e release clean docker
 
 BIN     := bin/cloudroof
-VERSION ?= 1.5.0
+VERSION ?= 1.5.1
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
 all: web build

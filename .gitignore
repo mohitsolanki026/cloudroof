@@ -1,8 +1,11 @@
 # build outputs
 /bin/
-/web/dist/*
-!/web/dist/.gitkeep
 /web/node_modules/
+# web/dist/ (the built frontend) IS committed: `go install` compiles module
+# source only and can't run the JS build, so the bundle must live in the repo
+# for the installed binary to include the UI. Rebuild with `make web` and
+# commit the result whenever the frontend changes. (Release tarballs go to the
+# repo-root /dist/, ignored below.)
 
 # runtime data — never commit a database or a master key
 /data/

@@ -307,6 +307,15 @@ One behavior the suite pinned down: **probe always drops the pooled connection
 first** (`probeMachine`). A reused connection never re-checks the host key or
 auth; a probe has to.
 
+## Building the frontend
+
+`web/dist/` (the built SPA) **is committed** — it is not a build artifact to
+gitignore here. `go install` compiles module source only and cannot run the JS
+build, so the bundle must live in the repo for an installed binary to include
+the UI. When you change anything under `web/src/`, run `make web` (or `make
+build`) and **commit the regenerated `web/dist/`** (fresh `index.html` + hashed
+`assets/`). `embed.go` embeds it via `//go:embed all:dist`.
+
 ## License
 
 AGPL-3.0-only (`LICENSE`), dual-licensed for a commercial tier. Keep source
