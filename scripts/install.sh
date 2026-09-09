@@ -3,12 +3,12 @@
 #
 # Downloads the latest release binary for this OS/arch and installs it to
 # /usr/local/bin (or ~/.local/bin without root). Override:
-#   CLOUDROOF_REPO   owner/repo to fetch from        (default cloudroof-sh/cloudroof)
+#   CLOUDROOF_REPO   owner/repo to fetch from        (default mohitsolanki026/cloudroof)
 #   CLOUDROOF_VERSION  tag to install                (default: latest)
 #   CLOUDROOF_BIN_DIR  install directory
 set -eu
 
-REPO="${CLOUDROOF_REPO:-cloudroof-sh/cloudroof}"
+REPO="${CLOUDROOF_REPO:-mohitsolanki026/cloudroof}"
 VERSION="${CLOUDROOF_VERSION:-latest}"
 
 say() { printf '%s\n' "$*"; }

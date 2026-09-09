@@ -7,22 +7,9 @@ the commands you keep re-typing through SSH.
 Nothing is installed on your machines. No credential leaves your box.
 
 ```
-curl -sSL https://get.cloudroof.sh | sh && cloudroof
+git clone https://github.com/mohitsolanki026/cloudroof
+cd cloudroof && make web && make build && ./bin/cloudroof
 ```
-
-or with Docker:
-
-```
-docker run -d -p 127.0.0.1:7070:7070 -v cloudroof:/data ghcr.io/cloudroof-sh/cloudroof
-```
-
-or from source:
-
-```
-make web && make build && ./bin/cloudroof
-```
-
-then open http://localhost:7070.
 
 ## What it does
 
@@ -115,7 +102,7 @@ explicitly and name the hosts you will use:
 
 ```
 cloudroof -addr 0.0.0.0:7070 -hosts cloudroof.lan,10.0.0.5
-docker run -d -p 7070:7070 -e CLOUDROOF_HOSTS=cloudroof.lan -v cloudroof:/data ghcr.io/cloudroof-sh/cloudroof
+docker run -d -p 7070:7070 -e CLOUDROOF_HOSTS=cloudroof.lan -v cloudroof:/data ghcr.io/mohitsolanki026/cloudroof
 ```
 
 Binding a network address without `-hosts` works but accepts any `Host` and
