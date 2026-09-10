@@ -6,10 +6,54 @@ the commands you keep re-typing through SSH.
 
 Nothing is installed on your machines. No credential leaves your box.
 
+**With Go** — installs the full binary, web UI bundled:
+
+```
+go install github.com/mohitsolanki026/cloudroof/cmd/cloudroof@latest
+~/go/bin/cloudroof        # go install puts the binary in $(go env GOPATH)/bin
+```
+
+To launch it as just `cloudroof`, put Go's bin directory on your PATH (append
+to `~/.bashrc` to make it stick):
+
+```
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+**Or build from source:**
+
 ```
 git clone https://github.com/mohitsolanki026/cloudroof
 cd cloudroof && make web && make build && ./bin/cloudroof
 ```
+
+Prebuilt binaries are also attached to each
+[release](https://github.com/mohitsolanki026/cloudroof/releases). Then open
+http://localhost:7070.
+
+## Screenshots
+
+The whole fleet in one view — every machine across six clouds, each with the
+two status dots (left: provider power state · right: SSH reachability):
+
+![CloudRoof fleet view](docs/fleet.svg)
+
+A single machine's operations surface — a live overview, with tabs for
+services, containers, network, disk, and a real terminal:
+
+![CloudRoof machine detail](docs/machine.svg)
+
+Run one action across many machines at once — the confirmation escalates to
+typing the number of affected hosts, after a preview that names every one:
+
+![CloudRoof bulk actions](docs/bulk.svg)
+
+Connect a cloud account — the form is generated from each provider's spec, so
+adding a provider needs no UI work:
+
+![CloudRoof settings and providers](docs/settings.svg)
+
+<sub>Interface previews, faithful to the actual UI.</sub>
 
 ## What it does
 
