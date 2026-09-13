@@ -72,6 +72,9 @@ type Target struct {
 	User    string
 	Auth    Auth
 	HostKey HostKeyPolicy
+	// Jump, when set, is a bastion Target to tunnel through instead of dialing
+	// Addr directly. Chains (jump-through-a-jump) nest via Jump.Jump.
+	Jump *Target
 }
 
 const (
@@ -106,7 +109,7 @@ func (b *Broker) Get(ctx context.Context, t Target) (*ssh.Client, error) {
 	}
 	b.mu.Unlock()
 
-	client, err := dial(ctx, t)
+	client, err := b.dial(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +206,7 @@ func (b *Broker) withDeadline(ctx context.Context, id int64, fn func() error) er
 	}
 }
 
-func dial(ctx context.Context, t Target) (*ssh.Client, error) {
+func (b *Broker) dial(ctx context.Context, t Target) (*ssh.Client, error) {
 	methods, err := authMethods(t.Auth)
 	if err != nil {
 		return nil, err
@@ -216,8 +219,20 @@ func dial(ctx context.Context, t Target) (*ssh.Client, error) {
 		HostKeyCallback: hostKeyCallback(t.HostKey),
 	}
 
-	d := net.Dialer{Timeout: dialTimeout}
-	raw, err := d.DialContext(ctx, "tcp", t.Addr)
+	var raw net.Conn
+	if t.Jump != nil {
+		// Tunnel through the bastion. Get pools it by its own machine ID (and
+		// recurses, so multi-hop chains work); the direct-tcpip channel then
+		// carries THIS machine's SSH handshake and its own host-key check.
+		jump, jerr := b.Get(ctx, *t.Jump)
+		if jerr != nil {
+			return nil, fmt.Errorf("ssh: jump via %s: %w", t.Jump.Addr, jerr)
+		}
+		raw, err = b.dialThrough(ctx, jump, t.Addr)
+	} else {
+		d := net.Dialer{Timeout: dialTimeout}
+		raw, err = d.DialContext(ctx, "tcp", t.Addr)
+	}
 	if err != nil {
 		return nil, classifyDial(err)
 	}
@@ -232,6 +247,28 @@ func dial(ctx context.Context, t Target) (*ssh.Client, error) {
 	_ = raw.SetDeadline(time.Time{})
 
 	return ssh.NewClient(c, chans, reqs), nil
+}
+
+// dialThrough opens a TCP connection to addr through an established bastion
+// client — an SSH direct-tcpip channel. ssh.Client.Dial carries no context, so
+// the call is bounded and a stuck dial is abandoned rather than blocking past
+// the caller's deadline.
+func (b *Broker) dialThrough(ctx context.Context, jump *ssh.Client, addr string) (net.Conn, error) {
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		c, e := jump.Dial("tcp", addr)
+		done <- result{c, e}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-done:
+		return r.conn, r.err
+	}
 }
 
 func authMethods(a Auth) ([]ssh.AuthMethod, error) {

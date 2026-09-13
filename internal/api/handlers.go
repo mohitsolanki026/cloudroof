@@ -90,6 +90,7 @@ type machineInput struct {
 	CloudAccountID *int64   `json:"cloudAccountId"`
 	InstanceID     string   `json:"instanceId"`
 	Provider       string   `json:"provider"`
+	JumpVia        *int64   `json:"jumpVia"`
 }
 
 // normalize trims what users paste. IPv6 literals lose their brackets here
@@ -116,6 +117,21 @@ func (in machineInput) validate() error {
 	return nil
 }
 
+// validateJump checks a machine's optional bastion reference: it must exist and
+// must not be the machine itself. Deeper cycles are caught at dial time.
+func (s *Server) validateJump(jump *int64, selfID int64) error {
+	if jump == nil {
+		return nil
+	}
+	if *jump == selfID {
+		return errors.New("a machine cannot jump through itself")
+	}
+	if _, err := s.store.GetMachine(*jump); err != nil {
+		return errors.New("jump host not found")
+	}
+	return nil
+}
+
 func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	var in machineInput
 	if err := readJSON(w, r, &in); err != nil {
@@ -127,11 +143,15 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err.Error())
 		return
 	}
+	if err := s.validateJump(in.JumpVia, 0); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
 	m, err := s.store.CreateMachine(store.Machine{
 		Name: in.Name, Tags: in.Tags,
 		SSHHost: in.SSHHost, SSHPort: in.SSHPort, SSHUser: in.SSHUser,
 		CredentialID: in.CredentialID, CloudAccountID: in.CloudAccountID,
-		InstanceID: in.InstanceID, Provider: in.Provider,
+		InstanceID: in.InstanceID, Provider: in.Provider, JumpVia: in.JumpVia,
 	})
 	if err != nil {
 		fail(w, err)
@@ -166,13 +186,20 @@ func (s *Server) updateMachine(w http.ResponseWriter, r *http.Request) {
 	// fingerprint so the next probe starts clean. A different user or
 	// credential is the same box but a different session: just drop the
 	// pooled connection so nothing keeps running under the old identity.
+	if err := s.validateJump(in.JumpVia, m.ID); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+
 	boxChanged := m.SSHHost != in.SSHHost || m.SSHPort != in.SSHPort
-	sessionChanged := boxChanged || m.SSHUser != in.SSHUser || !ptrEq(m.CredentialID, in.CredentialID)
+	sessionChanged := boxChanged || m.SSHUser != in.SSHUser ||
+		!ptrEq(m.CredentialID, in.CredentialID) || !ptrEq(m.JumpVia, in.JumpVia)
 
 	m.Name, m.Tags = in.Name, in.Tags
 	m.SSHHost, m.SSHPort, m.SSHUser = in.SSHHost, in.SSHPort, in.SSHUser
 	m.CredentialID, m.CloudAccountID = in.CredentialID, in.CloudAccountID
 	m.InstanceID, m.Provider = in.InstanceID, in.Provider
+	m.JumpVia = in.JumpVia
 
 	if err := s.store.UpdateMachine(m); err != nil {
 		fail(w, err)

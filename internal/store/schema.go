@@ -148,4 +148,11 @@ var migrations = []string{
 		created_at INTEGER NOT NULL
 	);
 	`,
+
+	// 004 — jump-host support: a machine's SSH connection can tunnel through
+	// another managed machine (a bastion). NULL means a direct dial. Referencing
+	// another machine keeps the bastion's own credential and pinned host key.
+	`
+	ALTER TABLE machines ADD COLUMN jump_via INTEGER;
+	`,
 }

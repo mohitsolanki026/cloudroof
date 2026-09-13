@@ -38,6 +38,7 @@ export interface Machine {
   sshPort: number
   sshUser: string
   credentialId: number | null
+  jumpVia: number | null
   reachState: ReachState
   reachError: string
   reachCheckedAt: string | null
@@ -56,6 +57,7 @@ export interface MachineInput {
   cloudAccountId: number | null
   instanceId: string
   provider: string
+  jumpVia?: number | null
 }
 
 export interface Credential {

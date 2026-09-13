@@ -62,6 +62,8 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no
 StrictModes no
+AllowTcpForwarding yes
+PermitOpen any
 LogLevel VERBOSE
 EOF
 }
@@ -251,6 +253,24 @@ st, r = call("POST", "/api/bulk/actions/custom.e2e-noop", {"groupId": gid, "conf
 check("bulk write wrong count still refused", st == 428)
 st, r = call("POST", "/api/bulk/actions/custom.e2e-noop", {"groupId": gid, "confirmText": "1"})
 check("bulk write runs when count matches", st == 200 and r["results"][0]["ok"])
+
+print("-- jump host (bastion) --")
+# A machine reached *through* the first one: same throwaway sshd, but routed
+# via a direct-tcpip channel opened on the bastion (mid).
+base = {"tags": [], "sshHost": "127.0.0.1", "sshPort": SSH_PORT, "sshUser": USER,
+        "credentialId": cred["id"], "cloudAccountId": None, "instanceId": "", "provider": ""}
+st, jm = call("POST", "/api/machines", {**base, "name": "via-jump", "jumpVia": mid})
+check("create machine with a jump host", st == 201 and jm.get("jumpVia") == mid, f"{st} {jm.get('jumpVia')}")
+jid = jm["id"]
+st, r = call("POST", f"/api/machines/{jid}/probe")
+check("probe succeeds through the bastion", st == 200 and r["reachState"] == "ok", f"{st} {r.get('code') if st != 200 else ''}")
+st, r = call("POST", f"/api/machines/{jid}/actions/system.overview")
+check("action runs through the jump host", st == 200 and r["data"]["uptimeSeconds"] > 0)
+st, r = call("PUT", f"/api/machines/{jid}", {**base, "name": "via-jump", "jumpVia": jid})
+check("self-jump rejected -> 400", st == 400)
+st, r = call("PUT", f"/api/machines/{jid}", {**base, "name": "via-jump", "jumpVia": 999999})
+check("jump to nonexistent machine rejected -> 400", st == 400)
+call("DELETE", f"/api/machines/{jid}")
 
 # cleanup v1.5 fixtures so the audit-count assertions below stay stable-ish
 call("DELETE", f"/api/groups/{gid}")

@@ -147,6 +147,22 @@ func (s *Server) Handler() http.Handler {
 // resolveTarget is the only place a sealed credential becomes plaintext. The
 // result lives on the stack of one request and in the broker's connection.
 func (s *Server) resolveTarget(m store.Machine) (sshx.Target, error) {
+	return s.resolveTargetChain(m, map[int64]bool{})
+}
+
+// resolveTargetChain unseals a machine into a dial-able Target and, if it jumps
+// through a bastion, resolves that bastion (another managed machine) as the
+// nested Jump target — recursively, with cycle and depth guards so a
+// mis-configured loop can't recurse forever.
+func (s *Server) resolveTargetChain(m store.Machine, seen map[int64]bool) (sshx.Target, error) {
+	if seen[m.ID] {
+		return sshx.Target{}, fmt.Errorf("ssh: jump-host cycle detected at machine %d", m.ID)
+	}
+	if len(seen) >= 8 {
+		return sshx.Target{}, fmt.Errorf("ssh: jump-host chain too deep")
+	}
+	seen[m.ID] = true
+
 	if m.CredentialID == nil {
 		return sshx.Target{}, actions.ErrNoHost
 	}
@@ -167,7 +183,7 @@ func (s *Server) resolveTarget(m store.Machine) (sshx.Target, error) {
 	if port == 0 {
 		port = 22
 	}
-	return sshx.Target{
+	target := sshx.Target{
 		ID:   m.ID,
 		Addr: net.JoinHostPort(strings.Trim(m.SSHHost, "[]"), strconv.Itoa(port)),
 		User: m.SSHUser,
@@ -177,7 +193,19 @@ func (s *Server) resolveTarget(m store.Machine) (sshx.Target, error) {
 			Password:   secret.Password,
 		},
 		HostKey: s.hostKeyPolicy(m.ID),
-	}, nil
+	}
+	if m.JumpVia != nil {
+		bastion, err := s.store.GetMachine(*m.JumpVia)
+		if err != nil {
+			return sshx.Target{}, fmt.Errorf("jump host %d: %w", *m.JumpVia, err)
+		}
+		jt, err := s.resolveTargetChain(bastion, seen)
+		if err != nil {
+			return sshx.Target{}, err
+		}
+		target.Jump = &jt
+	}
+	return target, nil
 }
 
 // sealedSecret is the JSON shape inside every credential blob. One shape for
