@@ -798,6 +798,53 @@ func (s *Server) catalog(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, actions.Catalog)
 }
 
+// --- settings ---------------------------------------------------------------
+
+type settingsDTO struct {
+	// ReachEnabled is whether the background reachability poller is running.
+	ReachEnabled bool `json:"reachEnabled"`
+}
+
+func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, settingsDTO{ReachEnabled: s.reachEnabled()})
+}
+
+type settingsInput struct {
+	// Pointers so an omitted field leaves the current value untouched.
+	ReachEnabled *bool `json:"reachEnabled"`
+}
+
+func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
+	var in settingsInput
+	if err := readJSON(w, r, &in); err != nil {
+		badRequest(w, err.Error())
+		return
+	}
+	if in.ReachEnabled != nil {
+		v := "0"
+		if *in.ReachEnabled {
+			v = "1"
+		}
+		if err := s.store.SetSetting(settingReachEnabled, v); err != nil {
+			fail(w, err)
+			return
+		}
+		if s.reach != nil {
+			s.reach.SetEnabled(*in.ReachEnabled)
+		}
+	}
+	writeJSON(w, 200, settingsDTO{ReachEnabled: s.reachEnabled()})
+}
+
+// reachEnabled reports the live poller state, falling back to the built-in
+// default when the poller has not been started (e.g. in a unit test).
+func (s *Server) reachEnabled() bool {
+	if s.reach != nil {
+		return s.reach.Enabled()
+	}
+	return true
+}
+
 func (s *Server) providers(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, provider.Specs())
 }

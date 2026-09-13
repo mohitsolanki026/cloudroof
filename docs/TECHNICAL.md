@@ -72,7 +72,7 @@ Two background goroutines are launched, both bound to a context cancelled on
 | Loop | Started by | Cadence | Job |
 |---|---|---|---|
 | Power-state sync | `StartBackground(ctx, 2m)` | every **2 minutes** | re-read cloud power state for every account (§8) |
-| Reachability poller | `StartReachPoller(ctx)` | ticks every **20s**, per-host schedule (§7) | keep the SSH status dot honest |
+| Reachability poller | `StartReachPoller(ctx)` | worker pool; dispatcher ticks every **5s**, per-host schedule (§7) | keep the SSH status dot honest |
 
 Shutdown drains in-flight HTTP handlers (5s grace) **before** the deferred
 broker/DB `Close`, so a request mid-flight isn't cut off.
@@ -204,8 +204,12 @@ the pooled SSH connection:
 sh -s   with stdin:  exit 0
 ```
 
-- `ExecOpts` timeout **12s**, output cap **256 bytes**, wrapped in a **15s**
-  context.
+- **Probe timeout is matched to the connection.** A machine whose SSH client is
+  already pooled (warm) gets a tight **5s** budget (`reachWarmTimeout`) — a live
+  connection answers `exit 0` in milliseconds, so anything slower is a stall
+  worth failing fast. A machine with no pooled client (cold) gets **15s**
+  (`reachColdTimeout`) to cover a full dial + handshake. `Broker.IsConnected`
+  picks between them.
 - On success → `reach_state = ok`.
 - On failure → the error is classified (`auth_failed`, `hostkey_changed`,
   `timeout`, `refused`, …), stored with its message, and the pooled connection
@@ -218,13 +222,20 @@ it drops the connection first and re-runs the full fingerprint.)
 
 ### How often it runs
 
-A single ticker wakes the poller **every 20 seconds** (`reachTick`) and runs
-everything currently *due*, at most **4 checks concurrently** (`reachFanout`).
+The poller is a **fixed pool of workers draining a queue**, not a blocking
+sweep. A **dispatcher** wakes every **5 seconds** (`reachTick`), lists machines,
+and hands every machine that is *due* (and not already in flight) to the queue;
+it never makes an SSH call itself, so scheduling can't be stalled by a slow
+host. **4 workers** (`reachFanout`) pull from the queue and run the probes. A
+probe that sits on its timeout occupies exactly one worker — the other three
+keep checking healthy machines — which is the key difference from the earlier
+single blocking sweep.
+
 Each machine carries its own next-due time:
 
-- **Healthy host → re-checked every ~60s** (`reachHealthy`). (Because the
-  sweep ticks every 20s, the actual check lands on the first tick at or after
-  the due time — so 60–80s in practice.)
+- **Healthy host → re-checked every ~60s** (`reachHealthy`). (The dispatcher
+  ticks every 5s, so the check lands on the first tick at or after the due
+  time — 60–65s in practice.)
 - **Failing host → exponential backoff**, so a dead box isn't hammered:
 
   ```
@@ -244,6 +255,25 @@ Each machine carries its own next-due time:
 - **Newly added hosts** are scheduled immediately (`next = now`) so they're
   checked on the very next tick.
 
+### Capacity
+
+Because workers are independent, sustained capacity is roughly
+`reachFanout × (reachHealthy / per-check time)`. A healthy fleet over warm
+connections checks in milliseconds, so that ceiling is in the thousands; a fleet
+with many slow or unreachable hosts is bounded by the worker count and the probe
+timeout, not by one slow host blocking the rest. `reachFanout` is a single
+constant — raise it for more headroom.
+
+### Turning it off (auto-probe toggle)
+
+Background probing can be paused from the **Fleet** dashboard (the *Auto-probe*
+toggle) or `PUT /api/settings {"reachEnabled": false}`. The state persists in the
+`settings` table (key `reach.enabled`) and is restored on restart (**default
+on**). When off, the dispatcher enqueues nothing, in-flight checks finish, and
+the last known reach state is left as-is; the manual **Probe** button still
+works. Use it to keep CloudRoof off a host's auth logs, or to quiet a large
+fleet you're only touching on demand.
+
 ### What it skips
 
 - Machines with **no host identity** (`!HasHost()`) — nothing to SSH to.
@@ -252,8 +282,9 @@ Each machine carries its own next-due time:
   power-on, `powerMachine` drops the connection and resets reach to `unknown`,
   and the next sweep re-checks.
 
-The scheduler map is pruned each sweep so entries for deleted machines don't
-accumulate. The whole loop stops when the process context is cancelled.
+The scheduler map is pruned on each dispatch tick so entries for deleted
+machines don't accumulate. The workers and dispatcher stop when the process
+context is cancelled.
 
 ---
 

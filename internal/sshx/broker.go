@@ -129,6 +129,17 @@ func (b *Broker) Get(ctx context.Context, t Target) (*ssh.Client, error) {
 	return client, nil
 }
 
+// IsConnected reports whether a live pooled client already exists for the
+// machine. A warm connection answers a trivial command almost instantly, so
+// the reachability poller uses this to pick a tight probe timeout and reserve
+// the generous one for a cold dial.
+func (b *Broker) IsConnected(id int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, ok := b.conns[id]
+	return ok
+}
+
 // Drop closes and forgets the connection for a machine. Safe to call when
 // there is none.
 func (b *Broker) Drop(id int64) {

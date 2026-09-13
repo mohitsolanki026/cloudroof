@@ -193,6 +193,11 @@ export interface BulkResponse {
   results: BulkResult[]
 }
 
+export interface Settings {
+  // Whether the background reachability poller (auto-probe) is running.
+  reachEnabled: boolean
+}
+
 export interface CustomActionInput {
   label: string
   category: string
@@ -287,6 +292,10 @@ export const api = {
   },
   catalog: () => req<Action[]>('GET', '/api/catalog').then(normalizeActions),
   providers: () => req<ProviderSpec[]>('GET', '/api/providers'),
+  settings: {
+    get: () => req<Settings>('GET', '/api/settings'),
+    update: (s: Partial<Settings>) => req<Settings>('PUT', '/api/settings', s),
+  },
   groups: {
     list: () => req<Group[]>('GET', '/api/groups'),
     create: (g: { name: string; tags: string[] }) => req<Group>('POST', '/api/groups', g),

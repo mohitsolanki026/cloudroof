@@ -272,6 +272,18 @@ st, r = call("PUT", f"/api/machines/{jid}", {**base, "name": "via-jump", "jumpVi
 check("jump to nonexistent machine rejected -> 400", st == 400)
 call("DELETE", f"/api/machines/{jid}")
 
+print("-- settings: auto-probe toggle --")
+st, s0 = call("GET", "/api/settings")
+check("settings default: auto-probe on", st == 200 and s0["reachEnabled"] is True, f"{st} {s0}")
+st, s1 = call("PUT", "/api/settings", {"reachEnabled": False})
+check("auto-probe can be turned off", st == 200 and s1["reachEnabled"] is False, f"{st} {s1}")
+st, s2 = call("GET", "/api/settings")
+check("auto-probe off persists", st == 200 and s2["reachEnabled"] is False)
+st, s3 = call("PUT", "/api/settings", {"reachEnabled": True})
+check("auto-probe can be turned back on", st == 200 and s3["reachEnabled"] is True)
+st, r = call("PUT", "/api/settings", {"bogus": 1})
+check("unknown settings field rejected -> 400", st == 400)
+
 # cleanup v1.5 fixtures so the audit-count assertions below stay stable-ish
 call("DELETE", f"/api/groups/{gid}")
 call("DELETE", "/api/custom-actions/custom.e2e-echo")

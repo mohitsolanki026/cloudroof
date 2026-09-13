@@ -155,4 +155,14 @@ var migrations = []string{
 	`
 	ALTER TABLE machines ADD COLUMN jump_via INTEGER;
 	`,
+
+	// 005 — a small key/value store for global preferences. First use: whether
+	// the background reachability poller is running (the dashboard's auto-probe
+	// toggle). An absent key means the built-in default.
+	`
+	CREATE TABLE settings (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	`,
 }

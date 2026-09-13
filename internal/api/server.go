@@ -50,6 +50,10 @@ type Server struct {
 	// syncMu serializes cloud syncs so the timer and a manual sync cannot
 	// race each other into duplicate machines.
 	syncMu sync.Mutex
+
+	// reach is the background reachability poller. Set by StartReachPoller;
+	// the settings endpoint toggles it live.
+	reach *reachPoller
 }
 
 type Options struct {
@@ -129,6 +133,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/custom-actions", s.listCustomActions)
 	mux.HandleFunc("POST /api/custom-actions", s.createCustomAction)
 	mux.HandleFunc("DELETE /api/custom-actions/{id}", s.deleteCustomAction)
+
+	// Settings (global preferences)
+	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/settings", s.updateSettings)
 
 	// Audit & metadata
 	mux.HandleFunc("GET /api/runs", s.listRuns)
