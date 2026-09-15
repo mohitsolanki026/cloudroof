@@ -79,7 +79,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		ActionID:    "terminal.open",
 		Command:     "(interactive shell)",
 		Danger:      actions.DangerDisruptive,
-		Actor:       actor,
+		Actor:       s.actorFor(r),
 		StartedAt:   time.Now().UTC(),
 	}); err != nil {
 		// Same rule as engine.Run: an unrecorded session is worse than a

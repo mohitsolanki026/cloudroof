@@ -54,6 +54,11 @@ type Server struct {
 	// reach is the background reachability poller. Set by StartReachPoller;
 	// the settings endpoint toggles it live.
 	reach *reachPoller
+
+	// authOff disables login entirely (the -no-auth escape hatch). login
+	// rate-limits password attempts per client IP.
+	authOff bool
+	login   *loginLimiter
 }
 
 type Options struct {
@@ -69,6 +74,10 @@ type Options struct {
 	// Loopback names are always allowed. AllowAnyHost skips the check.
 	AllowedHosts []string
 	AllowAnyHost bool
+	// DisableAuth turns off login entirely (the -no-auth escape hatch). The
+	// API is then reachable by anyone the browser guard admits — intended only
+	// for a trusted loopback/dev bind.
+	DisableAuth bool
 }
 
 func New(o Options) *Server {
@@ -81,6 +90,8 @@ func New(o Options) *Server {
 		devDist: o.DevDist,
 		hosts:   map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true},
 		anyHost: o.AllowAnyHost,
+		authOff: o.DisableAuth,
+		login:   newLoginLimiter(),
 	}
 	for _, h := range o.AllowedHosts {
 		s.hosts[hostOnly(h)] = true
@@ -134,6 +145,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/custom-actions", s.createCustomAction)
 	mux.HandleFunc("DELETE /api/custom-actions/{id}", s.deleteCustomAction)
 
+	// Auth (login, first-run setup, session)
+	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("POST /api/auth/setup", s.authSetup)
+	mux.HandleFunc("POST /api/auth/login", s.authLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
+	mux.HandleFunc("POST /api/auth/password", s.authPassword)
+
 	// Settings (global preferences)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.updateSettings)
@@ -149,7 +167,8 @@ func (s *Server) Handler() http.Handler {
 	// Everything else is the SPA.
 	mux.HandleFunc("/", s.spa)
 
-	return s.logRequests(s.guard(mux))
+	// Order: log → browser guard (host/origin/CSRF) → auth (session) → routes.
+	return s.logRequests(s.guard(s.requireAuth(mux)))
 }
 
 // resolveTarget is the only place a sealed credential becomes plaintext. The
@@ -313,8 +332,9 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 //     is what forces a browser to preflight a cross-site call at all.
 //
 // Non-browser clients (curl, the e2e script) send none of these headers and
-// pass. None of this replaces authentication; it keeps the loopback-bound
-// default honest until v2.5 adds users.
+// pass. This is the browser-side layer only; the session check in requireAuth
+// is what actually authenticates callers. The two run in sequence: guard first
+// (host/origin/CSRF), then auth.
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {

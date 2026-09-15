@@ -32,6 +32,10 @@ type Config struct {
 	// loopback. Empty is fine for the loopback default; a network bind
 	// without it accepts any Host (and says so in the log).
 	Hosts []string
+	// NoAuth disables the login requirement entirely — the -no-auth escape
+	// hatch. Intended only for a trusted loopback/dev bind; a network bind with
+	// it is a wide-open control plane.
+	NoAuth bool
 }
 
 // BindsLoopback reports whether Addr listens only on a loopback address.
@@ -65,6 +69,7 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&hosts, "hosts", envOr("CLOUDROOF_HOSTS", ""), "comma-separated hostnames the UI is reached on, e.g. cloudroof.lan,10.0.0.5 (Host-header allowlist; loopback is always allowed)")
 	fs.StringVar(&c.DataDir, "data", envOr("CLOUDROOF_DATA", defaultDataDir()), "data directory")
 	fs.BoolVar(&c.Dev, "dev", os.Getenv("CLOUDROOF_DEV") != "", "serve frontend from ./web/dist instead of embedded bundle")
+	fs.BoolVar(&c.NoAuth, "no-auth", os.Getenv("CLOUDROOF_NO_AUTH") != "", "disable login entirely (trusted loopback/dev only; a network bind then has no access control)")
 
 	if err := fs.Parse(args); err != nil {
 		return c, err

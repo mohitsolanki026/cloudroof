@@ -9,6 +9,7 @@ invariants that must not regress, see [`.agents/README.md`](../.agents/README.md
 - [3. Data model (SQLite)](#3-data-model-sqlite)
 - [4. The two-identity model & status](#4-the-two-identity-model--status)
 - [5. HTTP layer & the browser guard](#5-http-layer--the-browser-guard)
+- [5a. Authentication (login & sessions)](#5a-authentication-login--sessions)
 - [6. The SSH connection broker](#6-the-ssh-connection-broker)
 - [7. SSH reachability checks (frequency & backoff)](#7-ssh-reachability-checks-frequency--backoff)
 - [8. Cloud power-state sync](#8-cloud-power-state-sync)
@@ -73,6 +74,7 @@ Two background goroutines are launched, both bound to a context cancelled on
 |---|---|---|---|
 | Power-state sync | `StartBackground(ctx, 2m)` | every **2 minutes** | re-read cloud power state for every account (§8) |
 | Reachability poller | `StartReachPoller(ctx)` | worker pool; dispatcher ticks every **5s**, per-host schedule (§7) | keep the SSH status dot honest |
+| Session sweeper | `startSessionSweeper(ctx, …)` | every **1 hour** | delete expired login sessions (§5a) |
 
 Shutdown drains in-flight HTTP handlers (5s grace) **before** the deferred
 broker/DB `Close`, so a request mid-flight isn't cut off.
@@ -84,12 +86,15 @@ broker/DB `Close`, so a request mid-flight isn't cut off.
 Pure-Go driver (`modernc.org/sqlite`, so `CGO_ENABLED=0` stays possible). WAL
 mode, `foreign_keys=ON`, `busy_timeout=5s`. Timestamps are stored as Unix
 milliseconds. Migrations live in `internal/store/schema.go` as an ordered slice
-and are **append-only** — three have shipped:
+and are **append-only**:
 
 1. **001** — `credentials`, `cloud_accounts`, `machines`, `host_facts`,
    `host_keys`, `runs`.
 2. **002** — adds `host_keys.seen_algorithm` / `seen_fingerprint`.
 3. **003** — `groups`, `custom_actions`.
+4. **004** — adds `machines.jump_via` (jump-host / bastion, §6).
+5. **005** — `settings` (key/value; e.g. the auto-probe toggle, §7).
+6. **006** — `users`, `sessions` (authentication, §5a).
 
 Key tables:
 
@@ -104,6 +109,9 @@ Key tables:
   and `machine_name` is denormalized, so deleting a machine never erases the
   record of what was done to it.
 - **`groups`** / **`custom_actions`** — see §11.
+- **`users`** / **`sessions`** — the admin account and its server-side login
+  sessions (see §5a). A session stores only the SHA-256 of its cookie token.
+- **`settings`** — global key/value preferences (e.g. the auto-probe toggle).
 
 The migration runner (`execMigration`) strips `--` comments before splitting on
 `;`, and tolerates a `duplicate column name` (so a DB from an earlier in-place
@@ -144,8 +152,7 @@ Routing is the Go 1.22 `net/http.ServeMux` (method + path patterns), no router
 dependency. Two wrappers sit in front of every handler:
 
 1. `logRequests` — debug logging.
-2. `guard` — the browser-side defense that stands in for authentication until
-   multi-user lands. On every `/api` request it enforces:
+2. `guard` — the browser-side defense. On every `/api` request it enforces:
    - **Host allowlist** — `Host` must be loopback or a name passed via
      `-hosts`. Blocks **DNS rebinding** (a malicious page resolving its own
      name to `127.0.0.1`). Rejected with `421`.
@@ -154,12 +161,48 @@ dependency. Two wrappers sit in front of every handler:
    - **Content-Type** — state-changing requests with a body must be
      `application/json`, which forces a browser to preflight a cross-site call.
      Rejected with `415`.
+3. `requireAuth` — the session check (§5a). Runs after the guard.
 
-   Non-browser clients (curl, the binary's own tooling) send none of these and
-   pass. The websocket upgrader shares the same origin check.
+   Non-browser clients (curl, the binary's own tooling) send none of the guard
+   headers and pass it — but still need a session unless `-no-auth` is set. The
+   websocket upgrader shares the same origin check, and because the session
+   cookie rides the upgrade request, the terminal and log streams are gated by
+   `requireAuth` like any other route.
 
 Errors map to stable `code` strings the frontend switches on (`needs_confirm`,
-`needs_name`, `not_available`, `hostkey_changed`, `unreachable`, …).
+`needs_name`, `not_available`, `hostkey_changed`, `unreachable`, `unauthorized`,
+…).
+
+### 5a. Authentication (login & sessions)
+
+A single admin account (v2.0) gates the whole surface; the `role` column exists
+so multi-user (RBAC) needs no migration. Implemented in `internal/api/auth.go`.
+
+- **First run.** With no account yet, `GET /api/auth/me` reports
+  `setupRequired`, and the UI shows a create-admin screen (`POST
+  /api/auth/setup`, open exactly once). Headless installs use the CLI:
+  `cloudroof set-password` (reads the password from stdin; also resets a
+  forgotten one).
+- **Passwords** are hashed with **bcrypt** (cost 12). Login runs a bcrypt
+  compare even for an unknown username (against a fixed dummy hash) so timing
+  never reveals whether an account exists; the error is always the generic
+  `bad_credentials`.
+- **Sessions are server-side.** A login mints a 256-bit random token; the
+  browser holds it in an `HttpOnly; SameSite=Strict; Secure-when-HTTPS` cookie,
+  and only its **SHA-256** is stored in `sessions`. So the cookie is XSS-safe
+  (never in JS), a DB leak exposes no live session, and deleting a row revokes
+  instantly — none of which JWTs give you. Lifetime is 30 days, slid forward on
+  use; a background sweeper deletes expired rows.
+- **Password change** revokes every existing session (in one transaction) and
+  mints a fresh one for the current device — so changing your password logs out
+  everything else.
+- **Brute force** is rate-limited per client IP: after 8 consecutive failures
+  that IP is refused with `429` for 5 minutes.
+- **`-no-auth`** disables the whole check for a trusted loopback/dev bind; it
+  logs a warning at startup and must never be used on a network bind.
+
+This protects the **network surface only** — it does not gate the keyring, so a
+stolen `master.key` still exposes sealed credentials (see §13/§14).
 
 ---
 
@@ -503,10 +546,11 @@ so nothing can be trusted that the host didn't actually present.
   is an explicit `-addr 0.0.0.0:7070 -hosts <name,ip>`. A non-loopback bind
   without `-hosts` logs a warning and accepts any Host (the exposure `-hosts`
   closes).
-- **No authentication yet** (single admin, v1.5). The `guard` (§5) blocks the
-  browser attack classes, but anyone who can reach the port can drive the API —
-  so put CloudRoof behind an authenticating reverse proxy before exposing it.
-  Multi-user/RBAC/SSO is a later milestone.
+- **Authentication** (§5a) — a single admin account with server-side sessions
+  gates every route and websocket; `guard` (§5) blocks the browser attack
+  classes in front of it. `-no-auth` opts out for a trusted loopback/dev bind.
+  Multi-user/RBAC/SSO is a later milestone. Login protects the network surface,
+  **not** the keyring (§13).
 - **Secrets** — §13.
 - **Blast radius** — danger tiers, bulk escalation, no Tier-3 buttons, per-host
   audit, and per-action timeouts/cancellation.
@@ -523,6 +567,7 @@ Flags (and their environment equivalents), from `internal/config`:
 | `-hosts` | `CLOUDROOF_HOSTS` | (empty) | comma-separated Host-header allowlist for non-loopback binds |
 | `-data` | `CLOUDROOF_DATA` | `~/.config/cloudroof` | data directory (holds `cloudroof.db` + `master.key`) |
 | `-dev` | `CLOUDROOF_DEV` | off | serve the frontend from `web/dist` on disk instead of the embedded bundle |
+| `-no-auth` | `CLOUDROOF_NO_AUTH` | off | disable login entirely (trusted loopback/dev only) |
 | — | `CLOUDROOF_MASTER_KEY` | (unset) | base64 master key; overrides the key file |
 | — | `CLOUDROOF_LOG` | `info` | `debug` / `info` / `warn` |
 

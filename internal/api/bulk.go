@@ -120,7 +120,7 @@ func (s *Server) runBulk(w http.ResponseWriter, r *http.Request) {
 			// bulk gate above is what authorized the fan-out.
 			res, err := s.engine.Run(ctx, actions.Request{
 				MachineID: m.ID, ActionID: actionID, Params: in.Params,
-				Confirm: true, ConfirmName: m.Name, Actor: actor,
+				Confirm: true, ConfirmName: m.Name, Actor: s.actorFor(r),
 			})
 			br := bulkResult{MachineID: m.ID, MachineName: m.Name}
 			if err != nil {

@@ -198,6 +198,23 @@ export interface Settings {
   reachEnabled: boolean
 }
 
+export interface User {
+  id: number
+  username: string
+  role: string
+  createdAt: string
+  updatedAt: string
+}
+
+// AuthState is what GET /api/auth/me returns: enough for the client to decide
+// between the app, the login screen, and first-run setup.
+export interface AuthState {
+  authDisabled: boolean // -no-auth: run without login
+  setupRequired: boolean // no account exists yet
+  authenticated: boolean
+  user: User | null
+}
+
 export interface CustomActionInput {
   label: string
   category: string
@@ -219,6 +236,14 @@ export class ApiError extends Error {
   }
 }
 
+// A 401 with code "unauthorized" means the session lapsed. The app registers a
+// handler so it can drop straight to the login screen; auth endpoints use other
+// codes (bad_credentials, rate_limited) so a bad login never trips this.
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -234,6 +259,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     /* non-JSON error body */
   }
   if (!res.ok) {
+    if (res.status === 401 && json?.code === 'unauthorized') onUnauthorized?.()
     throw new ApiError(res.status, json?.code ?? 'internal', json?.error ?? text ?? res.statusText, json)
   }
   return json as T
@@ -295,6 +321,14 @@ export const api = {
   settings: {
     get: () => req<Settings>('GET', '/api/settings'),
     update: (s: Partial<Settings>) => req<Settings>('PUT', '/api/settings', s),
+  },
+  auth: {
+    me: () => req<AuthState>('GET', '/api/auth/me'),
+    login: (username: string, password: string) => req<User>('POST', '/api/auth/login', { username, password }),
+    logout: () => req<void>('POST', '/api/auth/logout'),
+    setup: (username: string, password: string) => req<User>('POST', '/api/auth/setup', { username, password }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      req<void>('POST', '/api/auth/password', { currentPassword, newPassword }),
   },
   groups: {
     list: () => req<Group[]>('GET', '/api/groups'),

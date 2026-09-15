@@ -49,6 +49,31 @@ type Credential struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// User is a login account. In v2.0 there is exactly one, with role "admin";
+// the role column exists now so multi-user (v2.5) needs no migration. The
+// password hash never leaves the process.
+type User struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Role      string    `json:"role"`
+	PWHash    string    `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// Session is a server-side login session. The cookie carries a random token;
+// only its SHA-256 (hex) is stored, so a database leak does not hand out live
+// sessions. Deleting the row revokes it immediately.
+type Session struct {
+	TokenHash string    `json:"-"`
+	UserID    int64     `json:"userId"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	LastSeen  time.Time `json:"lastSeen"`
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"userAgent"`
+}
+
 type CloudAccount struct {
 	ID            int64      `json:"id"`
 	Name          string     `json:"name"`
