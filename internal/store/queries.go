@@ -174,7 +174,7 @@ const machineCols = `
 	power_state, public_ip, private_ip, cloud_synced_at, missing,
 	ssh_host, ssh_port, ssh_user, credential_id,
 	reach_state, reach_error, reach_checked_at,
-	created_at, updated_at`
+	created_at, updated_at, jump_via`
 
 func (s *Store) CreateMachine(m Machine) (Machine, error) {
 	now := time.Now().UTC()
@@ -194,14 +194,14 @@ func (s *Store) CreateMachine(m Machine) (Machine, error) {
 			name, tags, cloud_account_id, provider, instance_id, region, instance_type,
 			power_state, public_ip, private_ip, cloud_synced_at, missing,
 			ssh_host, ssh_port, ssh_user, credential_id,
-			reach_state, reach_error, reach_checked_at, created_at, updated_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			reach_state, reach_error, reach_checked_at, created_at, updated_at, jump_via
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.Name, joinTags(m.Tags), nullInt64(m.CloudAccountID), m.Provider, m.InstanceID,
 		m.Region, m.InstanceType, string(m.PowerState), m.PublicIP, m.PrivateIP,
 		nullInt64(msPtr(m.CloudSyncedAt)), boolInt(m.Missing),
 		m.SSHHost, m.SSHPort, m.SSHUser, nullInt64(m.CredentialID),
 		string(m.ReachState), m.ReachError, nullInt64(msPtr(m.ReachCheckedAt)),
-		ms(m.CreatedAt), ms(m.UpdatedAt),
+		ms(m.CreatedAt), ms(m.UpdatedAt), nullInt64(m.JumpVia),
 	)
 	if err != nil {
 		return m, fmt.Errorf("store: create machine: %w", err)
@@ -248,16 +248,20 @@ func (s *Store) UpdateMachine(m Machine) error {
 		UPDATE machines SET
 			name = ?, tags = ?, ssh_host = ?, ssh_port = ?, ssh_user = ?,
 			credential_id = ?, cloud_account_id = ?, instance_id = ?, provider = ?,
-			updated_at = ?
+			jump_via = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Name, joinTags(m.Tags), m.SSHHost, m.SSHPort, m.SSHUser,
 		nullInt64(m.CredentialID), nullInt64(m.CloudAccountID), m.InstanceID, m.Provider,
-		ms(time.Now()), m.ID,
+		nullInt64(m.JumpVia), ms(time.Now()), m.ID,
 	)
 	return err
 }
 
 func (s *Store) DeleteMachine(id int64) error {
+	// Any machine that jumped through this one falls back to a direct dial.
+	if _, err := s.db.Exec(`UPDATE machines SET jump_via = NULL WHERE jump_via = ?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM machines WHERE id = ?`, id)
 	return err
 }
@@ -423,7 +427,7 @@ func (s *Store) MarkMissing(accountID int64, seen []string) error {
 func scanMachine(r scanner) (Machine, error) {
 	var m Machine
 	var tags, power, reach string
-	var cloudAcct, credID, syncedAt, reachAt sql.NullInt64
+	var cloudAcct, credID, syncedAt, reachAt, jumpVia sql.NullInt64
 	var missing int
 	var created, updated int64
 
@@ -433,7 +437,7 @@ func scanMachine(r scanner) (Machine, error) {
 		&power, &m.PublicIP, &m.PrivateIP, &syncedAt, &missing,
 		&m.SSHHost, &m.SSHPort, &m.SSHUser, &credID,
 		&reach, &m.ReachError, &reachAt,
-		&created, &updated,
+		&created, &updated, &jumpVia,
 	)
 	if err != nil {
 		return m, err
@@ -442,6 +446,7 @@ func scanMachine(r scanner) (Machine, error) {
 	m.Tags = splitTags(tags)
 	m.CloudAccountID = ptrInt64(cloudAcct)
 	m.CredentialID = ptrInt64(credID)
+	m.JumpVia = ptrInt64(jumpVia)
 	m.PowerState = PowerState(power)
 	m.ReachState = ReachState(reach)
 	m.CloudSyncedAt = fromMsPtr(syncedAt)
@@ -814,6 +819,27 @@ func (s *Store) GetCustomAction(id string) (CustomAction, error) {
 
 func (s *Store) DeleteCustomAction(id string) error {
 	_, err := s.db.Exec(`DELETE FROM custom_actions WHERE id = ?`, id)
+	return err
+}
+
+// --- settings ---------------------------------------------------------------
+
+// GetSetting returns a global preference by key, or ErrNotFound when it has
+// never been set (the caller then applies its built-in default).
+func (s *Store) GetSetting(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return v, err
+}
+
+// SetSetting stores (or replaces) a global preference.
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO settings(key, value) VALUES(?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 

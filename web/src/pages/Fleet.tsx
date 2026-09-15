@@ -18,6 +18,7 @@ export function Fleet() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [probing, setProbing] = useState<Set<number>>(new Set())
   const [bulk, setBulk] = useState<BulkAction | null>(null)
+  const [autoProbe, setAutoProbe] = useState<boolean | null>(null)
   const toast = useToast()
 
   const load = useCallback(async () => {
@@ -28,6 +29,19 @@ export function Fleet() {
     }
   }, [toast])
 
+  const toggleAutoProbe = async () => {
+    const next = !(autoProbe ?? true)
+    setAutoProbe(next) // optimistic
+    try {
+      const s = await api.settings.update({ reachEnabled: next })
+      setAutoProbe(s.reachEnabled)
+      toast(s.reachEnabled ? 'Auto-probe on — machines are checked in the background' : 'Auto-probe off — reachability updates only when you click Probe')
+    } catch (e: any) {
+      setAutoProbe(!next) // revert
+      toast(e.message, true)
+    }
+  }
+
   useEffect(() => {
     load()
     const t = setInterval(load, POLL_MS)
@@ -36,6 +50,7 @@ export function Fleet() {
 
   // Groups (for the filter) and the bulk action menu (catalog + custom).
   useEffect(() => {
+    api.settings.get().then((s) => setAutoProbe(s.reachEnabled)).catch(() => {})
     api.groups.list().then(setGroups).catch(() => {})
     Promise.all([api.catalog(), api.customActions.list()])
       .then(([cat, custom]) => {
@@ -128,6 +143,21 @@ export function Fleet() {
           )}
         </div>
         <div className="toolbar">
+          {autoProbe !== null && (
+            <button
+              className={'btn sm' + (autoProbe ? '' : ' ghost')}
+              onClick={toggleAutoProbe}
+              aria-pressed={autoProbe}
+              title={
+                autoProbe
+                  ? 'Auto-probe is on — CloudRoof checks reachability in the background. Click to pause.'
+                  : 'Auto-probe is off — reachability only updates when you click Probe. Click to resume.'
+              }
+            >
+              <span className={'dot ' + (autoProbe ? 'ok' : 'off')} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+              Auto-probe {autoProbe ? 'on' : 'off'}
+            </button>
+          )}
           <select className="select" value={groupId} onChange={(e) => setGroupId(e.target.value ? Number(e.target.value) : '')}>
             <option value="">All machines</option>
             {groups.map((g) => (

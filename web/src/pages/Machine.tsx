@@ -1346,14 +1346,17 @@ function Web({ m, run, actions }: { m: Machine; run: Runner; actions: Action[] }
 function EditConnection({ m, onClose, onSaved }: { m: Machine; onClose: () => void; onSaved: () => void }) {
   const toast = useToast()
   const [creds, setCreds] = useState<Credential[]>([])
+  const [machines, setMachines] = useState<Machine[]>([])
   const [host, setHost] = useState(m.sshHost)
   const [port, setPort] = useState(m.sshPort || 22)
   const [user, setUser] = useState(m.sshUser)
   const [credentialId, setCredentialId] = useState<string>(m.credentialId ? String(m.credentialId) : '')
+  const [jumpVia, setJumpVia] = useState<string>(m.jumpVia ? String(m.jumpVia) : '')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     api.credentials.list().then(setCreds).catch(() => {})
+    api.machines.list().then(setMachines).catch(() => {})
   }, [])
 
   const save = async () => {
@@ -1366,6 +1369,7 @@ function EditConnection({ m, onClose, onSaved }: { m: Machine; onClose: () => vo
         sshPort: Number(port) || 22,
         sshUser: user.trim(),
         credentialId: credentialId ? Number(credentialId) : null,
+        jumpVia: jumpVia ? Number(jumpVia) : null,
         cloudAccountId: m.cloudAccountId,
         instanceId: m.instanceId,
         provider: m.provider,
@@ -1420,7 +1424,23 @@ function EditConnection({ m, onClose, onSaved }: { m: Machine; onClose: () => vo
               ))}
             </select>
           </div>
-          <span className="hint">Changing the host or port re-pins the host key and re-fingerprints on the next probe.</span>
+          <div className="field">
+            <label>Connect through (jump host)</label>
+            <select className="select" value={jumpVia} onChange={(e) => setJumpVia(e.target.value)}>
+              <option value="">— direct (no jump) —</option>
+              {machines
+                .filter((x) => x.id !== m.id && hasHost(x))
+                .map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} ({x.sshHost})
+                  </option>
+                ))}
+            </select>
+            <span className="hint">
+              Tunnel this machine's SSH through another managed machine (a bastion) — for hosts only reachable via a public jump box.
+            </span>
+          </div>
+          <span className="hint">Changing the host, port, or jump host re-pins the host key and re-fingerprints on the next probe.</span>
         </div>
         <div className="modal-foot">
           <button className="btn" onClick={onClose} disabled={busy}>

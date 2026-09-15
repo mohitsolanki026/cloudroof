@@ -61,6 +61,8 @@ func TestUpgradeFromV01Database(t *testing.T) {
 		first_seen  INTEGER NOT NULL
 	)`)
 	mustExec(t, db, `INSERT INTO host_keys VALUES (1, 'ssh-ed25519', 'SHA256:old', 0)`)
+	// migration 004 alters machines, so the fixture needs it (a real v0.1 DB has it).
+	mustExec(t, db, `CREATE TABLE machines (id INTEGER PRIMARY KEY)`)
 	mustExec(t, db, `INSERT INTO schema_migrations VALUES (1, 0)`)
 	db.Close()
 
@@ -97,6 +99,8 @@ func TestUpgradeToleratesExistingColumns(t *testing.T) {
 		seen_algorithm   TEXT NOT NULL DEFAULT '',
 		seen_fingerprint TEXT NOT NULL DEFAULT ''
 	)`)
+	// migration 004 alters machines, so the fixture needs it (a real v0.1 DB has it).
+	mustExec(t, db, `CREATE TABLE machines (id INTEGER PRIMARY KEY)`)
 	mustExec(t, db, `INSERT INTO schema_migrations VALUES (1, 0)`)
 	db.Close()
 

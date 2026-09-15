@@ -84,6 +84,9 @@ type Machine struct {
 	SSHPort      int    `json:"sshPort"`
 	SSHUser      string `json:"sshUser"`
 	CredentialID *int64 `json:"credentialId"`
+	// JumpVia, when set, is the id of another machine to tunnel the SSH
+	// connection through (a bastion). Nil means a direct dial.
+	JumpVia *int64 `json:"jumpVia"`
 
 	// Reachability.
 	ReachState     ReachState `json:"reachState"`
