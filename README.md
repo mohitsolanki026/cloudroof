@@ -29,7 +29,7 @@ cd cloudroof && make web && make build && ./bin/cloudroof
 
 Prebuilt binaries are also attached to each
 [release](https://github.com/mohitsolanki026/cloudroof/releases). Then open
-http://localhost:7070.
+http://localhost:7070 — on first launch you'll create an admin login.
 
 ## Screenshots
 
@@ -137,12 +137,32 @@ Every button shows the exact command before it runs and logs it after. Actions
 that need root use passwordless `sudo -n` where the host allows it and are
 disabled, never left to hang on a prompt, where it doesn't.
 
+## Login & accounts
+
+On first launch CloudRoof asks you to **create an admin account**; every request
+after that needs a session (an `HttpOnly`, `SameSite=Strict` cookie — the token
+is stored only as its SHA-256, so a database leak yields no live sessions).
+Change your password in **Settings → Account**. From the CLI:
+
+```
+printf '%s' 'a-strong-password' | cloudroof set-password    # bootstrap or reset the admin
+```
+
+Login guards the network surface, not the disk: it does **not** gate the
+keyring, so protect `master.key` as you always would.
+
+For a trusted, single-user loopback box you can turn login off entirely with
+`-no-auth` (or `CLOUDROOF_NO_AUTH=1`) — it logs a warning, and must never be
+used on a network bind.
+
+Multiple users and roles (RBAC) are the next milestone.
+
 ## Network exposure
 
-There is no login yet. CloudRoof therefore binds to `127.0.0.1:7070` by default,
-refuses requests whose `Host` header is not itself (DNS rebinding), and refuses
-cross-origin browser requests (CSRF). To reach it from another machine, opt in
-explicitly and name the hosts you will use:
+CloudRoof binds to `127.0.0.1:7070` by default, refuses requests whose `Host`
+header is not itself (DNS rebinding), and refuses cross-origin browser requests
+(CSRF). To reach it from another machine, opt in explicitly and name the hosts
+you will use:
 
 ```
 cloudroof -addr 0.0.0.0:7070 -hosts cloudroof.lan,10.0.0.5
@@ -150,9 +170,9 @@ docker run -d -p 7070:7070 -e CLOUDROOF_HOSTS=cloudroof.lan -v cloudroof:/data g
 ```
 
 Binding a network address without `-hosts` works but accepts any `Host` and
-logs a warning at startup. Put CloudRoof behind a reverse proxy that adds
-authentication and TLS before exposing it beyond a trusted network. Multi-user
-auth is on the roadmap.
+logs a warning at startup. For internet exposure, still put CloudRoof behind a
+reverse proxy that terminates TLS (the session cookie sets `Secure` when it
+sees HTTPS, directly or via `X-Forwarded-Proto`).
 
 ## Development
 

@@ -165,4 +165,33 @@ var migrations = []string{
 		value TEXT NOT NULL
 	);
 	`,
+
+	// 006 — v2.0 authentication. A login account (single admin in v2.0; the
+	// role column is here so multi-user needs no later migration) and
+	// server-side sessions. The cookie carries a random token; only its SHA-256
+	// is stored, so a database leak yields no live sessions, and deleting a row
+	// revokes a session at once.
+	`
+	CREATE TABLE users (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		username   TEXT    NOT NULL UNIQUE,
+		pw_hash    TEXT    NOT NULL,
+		role       TEXT    NOT NULL DEFAULT 'admin',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+
+	CREATE TABLE sessions (
+		token_hash TEXT    PRIMARY KEY,   -- SHA-256(token), hex
+		user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		last_seen  INTEGER NOT NULL,
+		ip         TEXT    NOT NULL DEFAULT '',
+		user_agent TEXT    NOT NULL DEFAULT ''
+	);
+
+	CREATE INDEX idx_sessions_user    ON sessions(user_id);
+	CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+	`,
 }

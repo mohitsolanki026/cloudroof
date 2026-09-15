@@ -33,6 +33,15 @@ func main() {
 			return
 		}
 	}
+	// Subcommands come before flags. set-password bootstraps or resets the
+	// admin login from the CLI (headless installs, lockout recovery).
+	if len(os.Args) > 1 && os.Args[1] == "set-password" {
+		if err := setPassword(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "cloudroof:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "cloudroof:", err)
 		os.Exit(1)
@@ -69,6 +78,11 @@ func run(args []string) error {
 		Log:          log,
 		Static:       web.Dist(),
 		AllowedHosts: cfg.Hosts,
+		DisableAuth:  cfg.NoAuth,
+	}
+	if cfg.NoAuth {
+		log.Warn("authentication is DISABLED (-no-auth): anyone who can reach this " +
+			"address has full control — use only on a trusted loopback/dev bind")
 	}
 	if !cfg.BindsLoopback() && len(cfg.Hosts) == 0 {
 		// Reachable from the network with no Host allowlist. Accept any Host
@@ -89,6 +103,7 @@ func run(args []string) error {
 
 	srv.StartBackground(ctx, 2*time.Minute)
 	srv.StartReachPoller(ctx)
+	startSessionSweeper(ctx, db, log)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

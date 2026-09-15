@@ -843,6 +843,123 @@ func (s *Store) SetSetting(key, value string) error {
 	return err
 }
 
+// --- users & sessions -------------------------------------------------------
+
+const userCols = `id, username, pw_hash, role, created_at, updated_at`
+
+func scanUser(r scanner) (User, error) {
+	var u User
+	var created, updated int64
+	if err := r.Scan(&u.ID, &u.Username, &u.PWHash, &u.Role, &created, &updated); err != nil {
+		return u, err
+	}
+	u.CreatedAt, u.UpdatedAt = fromMs(created), fromMs(updated)
+	return u, nil
+}
+
+// CountUsers reports how many accounts exist. Zero means first-run setup is
+// still pending.
+func (s *Store) CountUsers() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
+func (s *Store) CreateUser(username, pwHash, role string) (User, error) {
+	now := time.Now().UTC()
+	res, err := s.db.Exec(
+		`INSERT INTO users (username, pw_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		username, pwHash, role, ms(now), ms(now),
+	)
+	if err != nil {
+		return User{}, fmt.Errorf("store: create user: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	return User{ID: id, Username: username, PWHash: pwHash, Role: role, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+func (s *Store) GetUser(id int64) (User, error) {
+	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return u, ErrNotFound
+	}
+	return u, err
+}
+
+func (s *Store) GetUserByUsername(username string) (User, error) {
+	u, err := scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username = ?`, username))
+	if errors.Is(err, sql.ErrNoRows) {
+		return u, ErrNotFound
+	}
+	return u, err
+}
+
+// SetUserPassword updates the hash and revokes every existing session for the
+// user, so a password change logs out other devices.
+func (s *Store) SetUserPassword(id int64, pwHash string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET pw_hash = ?, updated_at = ? WHERE id = ?`, pwHash, ms(time.Now().UTC()), id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) CreateSession(sess Session) error {
+	_, err := s.db.Exec(
+		`INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen, ip, user_agent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		sess.TokenHash, sess.UserID, ms(sess.CreatedAt), ms(sess.ExpiresAt), ms(sess.LastSeen), sess.IP, sess.UserAgent,
+	)
+	return err
+}
+
+// GetSession returns a session by its token hash. An expired session is treated
+// as absent (and swept) so callers never have to double-check the clock.
+func (s *Store) GetSession(tokenHash string) (Session, error) {
+	var sess Session
+	var created, expires, seen int64
+	err := s.db.QueryRow(
+		`SELECT token_hash, user_id, created_at, expires_at, last_seen, ip, user_agent FROM sessions WHERE token_hash = ?`, tokenHash,
+	).Scan(&sess.TokenHash, &sess.UserID, &created, &expires, &seen, &sess.IP, &sess.UserAgent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sess, ErrNotFound
+	}
+	if err != nil {
+		return sess, err
+	}
+	sess.CreatedAt, sess.ExpiresAt, sess.LastSeen = fromMs(created), fromMs(expires), fromMs(seen)
+	if time.Now().After(sess.ExpiresAt) {
+		_ = s.DeleteSession(tokenHash)
+		return Session{}, ErrNotFound
+	}
+	return sess, nil
+}
+
+// TouchSession refreshes last_seen and slides the expiry forward so an active
+// session does not lapse.
+func (s *Store) TouchSession(tokenHash string, lastSeen, expiresAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token_hash = ?`, ms(lastSeen), ms(expiresAt), tokenHash)
+	return err
+}
+
+func (s *Store) DeleteSession(tokenHash string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+// DeleteExpiredSessions sweeps sessions past their expiry. Called on a timer.
+func (s *Store) DeleteExpiredSessions() error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, ms(time.Now().UTC()))
+	return err
+}
+
 func scanCustomAction(r scanner) (CustomAction, error) {
 	var a CustomAction
 	var params, requires string

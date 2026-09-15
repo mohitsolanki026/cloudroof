@@ -23,7 +23,9 @@ import (
 	"github.com/mohitsolanki026/cloudroof/internal/store"
 )
 
-const actor = "admin" // single-user in v0.1; multi-user lands in v2.5
+// actor is the audit fallback when no user is on the request — i.e. with
+// -no-auth. Otherwise s.actorFor(r) records the logged-in username.
+const actor = "admin"
 
 func pathID(r *http.Request, name string) (int64, error) {
 	return strconv.ParseInt(r.PathValue(name), 10, 64)
@@ -378,7 +380,7 @@ func (s *Server) powerMachine(w http.ResponseWriter, r *http.Request) {
 		ActionID:    "power." + string(in.Action),
 		Command:     fmt.Sprintf("%s %s %s", p.Name(), in.Action, m.InstanceID),
 		Danger:      in.Action.Danger(),
-		Actor:       actor,
+		Actor:       s.actorFor(r),
 		StartedAt:   time.Now().UTC(),
 	}
 
@@ -492,7 +494,7 @@ func (s *Server) runAction(w http.ResponseWriter, r *http.Request) {
 		Params:      in.Params,
 		Confirm:     in.Confirm,
 		ConfirmName: in.ConfirmName,
-		Actor:       actor,
+		Actor:       s.actorFor(r),
 	})
 	if err != nil {
 		// A transport failure updates reachability; the next fleet poll

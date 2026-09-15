@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type Credential, type CloudAccount, type CredKind, type Machine, type ProviderSpec, type ProviderCredentials, type Group, type CustomAction } from '../api'
+import { api, type Credential, type CloudAccount, type CredKind, type Machine, type ProviderSpec, type ProviderCredentials, type Group, type CustomAction, type AuthState } from '../api'
 import { ago } from '../lib/format'
 import { useToast } from '../App'
 
@@ -47,7 +47,76 @@ export function Settings() {
       <LinkMachines machines={machines} creds={creds} onDone={reload} />
       <Groups groups={groups} machines={machines} onDone={reload} />
       <CustomActions actions={customActions} onDone={reload} />
+      <Account />
     </>
+  )
+}
+
+// --- account ------------------------------------------------------------------
+
+// Account lets the signed-in user change their password. It is self-contained:
+// it fetches auth state and renders nothing when auth is disabled (-no-auth).
+function Account() {
+  const [me, setMe] = useState<AuthState | null>(null)
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  useEffect(() => {
+    api.auth.me().then(setMe).catch(() => {})
+  }, [])
+
+  if (!me || me.authDisabled || !me.authenticated || !me.user) return null
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (next !== confirm) {
+      toast('New passwords do not match', true)
+      return
+    }
+    setBusy(true)
+    try {
+      await api.auth.changePassword(current, next)
+      setCurrent('')
+      setNext('')
+      setConfirm('')
+      toast('Password changed — other sessions were logged out')
+    } catch (err: any) {
+      toast(err.message, true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="section">
+      <h2>Account</h2>
+      <div className="card">
+        <p className="muted" style={{ marginTop: 0 }}>
+          Signed in as <strong>{me.user.username}</strong>. Changing your password logs out every other device.
+        </p>
+        <form onSubmit={submit} style={{ maxWidth: 380 }}>
+          <div className="field">
+            <label>Current password</label>
+            <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
+          </div>
+          <div className="field">
+            <label>New password</label>
+            <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
+            <span className="hint">At least 10 characters.</span>
+          </div>
+          <div className="field">
+            <label>Confirm new password</label>
+            <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+          </div>
+          <button className="btn primary" type="submit" disabled={busy || !current || !next}>
+            {busy ? '…' : 'Change password'}
+          </button>
+        </form>
+      </div>
+    </div>
   )
 }
 

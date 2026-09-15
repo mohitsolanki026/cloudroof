@@ -5,8 +5,10 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func openRaw(t *testing.T, path string) *sql.DB {
@@ -253,5 +255,56 @@ func TestCustomActionRoundTrip(t *testing.T) {
 	}
 	if _, err := s.GetCustomAction("custom.tail"); err == nil {
 		t.Fatal("expected not-found after delete")
+	}
+}
+
+// Auth: an account round-trips, an expired session reads as absent, and a
+// password change revokes every live session.
+func TestAuthUsersAndSessions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if n, _ := s.CountUsers(); n != 0 {
+		t.Fatalf("fresh db should have no users, got %d", n)
+	}
+	u, err := s.CreateUser("admin", "hash-v1", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.CountUsers(); n != 1 {
+		t.Fatalf("want 1 user, got %d", n)
+	}
+	if got, err := s.GetUserByUsername("admin"); err != nil || got.ID != u.ID || got.PWHash != "hash-v1" {
+		t.Fatalf("lookup by username wrong: %+v err=%v", got, err)
+	}
+
+	now := time.Now().UTC()
+	live := Session{TokenHash: "live", UserID: u.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour), LastSeen: now}
+	dead := Session{TokenHash: "dead", UserID: u.ID, CreatedAt: now, ExpiresAt: now.Add(-time.Minute), LastSeen: now}
+	if err := s.CreateSession(live); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(dead); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSession("live"); err != nil {
+		t.Fatalf("live session should be readable: %v", err)
+	}
+	if _, err := s.GetSession("dead"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired session must read as not-found, got %v", err)
+	}
+
+	// A password change must boot every existing session.
+	if err := s.SetUserPassword(u.ID, "hash-v2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSession("live"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("password change must revoke live sessions")
+	}
+	if got, _ := s.GetUserByUsername("admin"); got.PWHash != "hash-v2" {
+		t.Fatalf("password not updated: %q", got.PWHash)
 	}
 }

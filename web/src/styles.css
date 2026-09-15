@@ -112,6 +112,30 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .main { padding: 28px 24px 64px; max-width: 1240px; width: 100%; margin: 0 auto; }
 
+.userbox { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+
+/* Auth: login / first-run setup, shown in place of the shell. */
+.auth-loading { display: grid; place-items: center; min-height: 100vh; color: var(--muted); }
+.auth-screen { display: grid; place-items: center; min-height: 100vh; padding: 24px; }
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 28px 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 12px 40px -18px rgba(0, 0, 0, 0.35);
+}
+.auth-brand { font-family: var(--f-display); font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.auth-card h1 { font-size: 20px; margin: 10px 0 2px; }
+.auth-hint { margin: 0 0 8px; font-size: 13px; line-height: 1.45; }
+.auth-card label { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-top: 10px; }
+.auth-card .input { margin-top: 4px; }
+.auth-submit { margin-top: 18px; justify-content: center; }
+
 .page-head {
   display: flex;
   align-items: flex-end;

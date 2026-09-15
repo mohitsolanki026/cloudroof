@@ -14,8 +14,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 D=${E2E_DIR:-$(mktemp -d -t cloudroof-e2e.XXXXXX)}
 SSH_PORT=${E2E_SSH_PORT:-2222}
 API_PORT=${E2E_API_PORT:-7171}
+AUTH_PORT=${E2E_AUTH_PORT:-7172}
 B="http://127.0.0.1:$API_PORT"
-export D B SSH_PORT
+AB="http://127.0.0.1:$AUTH_PORT"
+export D B AB SSH_PORT
 
 # sshd forks a child per connection; SIGTERM to the listener leaves those
 # children serving live sessions. Kill everything started from our config.
@@ -28,6 +30,7 @@ stop_sshd() {
 cleanup() {
   set +e
   [[ -n "${CLOUDROOF_PID:-}" ]] && kill "$CLOUDROOF_PID" 2>/dev/null
+  [[ -n "${AUTH_PID:-}" ]] && kill "$AUTH_PID" 2>/dev/null
   stop_sshd
   wait 2>/dev/null
   [[ -z "${E2E_KEEP:-}" ]] && rm -rf "$D" || echo "kept $D"
@@ -77,8 +80,11 @@ write_sshd_config; start_sshd
 ssh -q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes \
     -i "$D/client" -p "$SSH_PORT" "$USER@127.0.0.1" 'echo direct-ssh-ok'
 
-echo "== cloudroof on $B =="
-"$D/cloudroof" -addr "127.0.0.1:$API_PORT" -data "$D/data" > "$D/cloudroof.log" 2>&1 &
+echo "== cloudroof on $B (functional suite runs with -no-auth) =="
+# The functional suite and its separate WebSocket client processes talk to the
+# API directly; -no-auth keeps them focused on machine ops (and exercises the
+# escape hatch). Authentication has its own dedicated instance below.
+"$D/cloudroof" -addr "127.0.0.1:$API_PORT" -data "$D/data" -no-auth > "$D/cloudroof.log" 2>&1 &
 CLOUDROOF_PID=$!
 for _ in $(seq 1 50); do curl -sf "$B/api/health" >/dev/null && break; sleep 0.1; done
 
@@ -429,6 +435,94 @@ open(D + "/fails3", "w").write("\n".join(fails))
 sys.exit(1 if fails else 0)
 PY
 
+# ---------------------------------------------------------------------------
+# Auth suite: a dedicated instance with authentication ENABLED, so the session
+# flow is tested end to end (cookies, gating, password change, rate limiting)
+# without disturbing the functional suite's direct API access above.
+# ---------------------------------------------------------------------------
+echo "== auth suite on $AB (dedicated instance, auth enabled) =="
+"$D/cloudroof" -addr "127.0.0.1:$AUTH_PORT" -data "$D/authdata" > "$D/auth.log" 2>&1 &
+AUTH_PID=$!
+for _ in $(seq 1 50); do curl -sf "$AB/api/health" >/dev/null && break; sleep 0.1; done
+
+python3 - <<'PY'
+import http.cookiejar, json, os, sys, urllib.request, urllib.error
+
+AB = os.environ["AB"]
+fails = []
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+def send(op, method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    req = urllib.request.Request(AB + path, data=data, method=method, headers={"Content-Type": "application/json"})
+    try:
+        r = op.open(req, timeout=30); t = r.read()
+        return r.status, (json.loads(t) if t else None)
+    except urllib.error.HTTPError as e:
+        t = e.read()
+        try: return e.code, json.loads(t)
+        except Exception: return e.code, t.decode()
+
+# jar=True carries this client's session cookie; jar=False is an anonymous call.
+def call(method, path, body=None, jar=True):
+    return send(opener if jar else urllib.request.build_opener(), method, path, body)
+
+def check(name, cond, detail=""):
+    print(("  ok   " if cond else "  FAIL ") + name + (f"  ({detail})" if detail else ""))
+    if not cond: fails.append(name)
+
+print("-- auth: first-run setup --")
+st, me = call("GET", "/api/auth/me")
+check("me reports setup required", st == 200 and me["setupRequired"] and not me["authenticated"], f"{st} {me}")
+st, r = call("GET", "/api/machines", jar=False)
+check("protected route before login -> 401", st == 401 and r["code"] == "unauthorized", f"{st}")
+st, r = call("POST", "/api/auth/setup", {"username": "e2e-admin", "password": "short"})
+check("weak setup password rejected -> 400", st == 400)
+st, u = call("POST", "/api/auth/setup", {"username": "e2e-admin", "password": "correct-horse"})
+check("setup creates admin + session", st == 201 and u["username"] == "e2e-admin" and u["role"] == "admin", f"{st} {u}")
+st, me = call("GET", "/api/auth/me")
+check("me now authenticated", st == 200 and me["authenticated"] and me["user"]["username"] == "e2e-admin")
+st, r = call("POST", "/api/auth/setup", {"username": "x", "password": "another-strong-1"})
+check("setup closed after first account -> 409", st == 409 and r["code"] == "already_setup")
+
+print("-- auth: session gates protected routes --")
+st, r = call("GET", "/api/machines")
+check("protected route with session -> 200", st == 200)
+
+print("-- auth: password change re-mints this session, boots others --")
+other = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+st, _ = send(other, "POST", "/api/auth/login", {"username": "e2e-admin", "password": "correct-horse"})
+check("second device logs in", st == 200)
+st, _ = send(other, "GET", "/api/machines")
+check("second device authenticated", st == 200)
+st, _ = call("POST", "/api/auth/password", {"currentPassword": "correct-horse", "newPassword": "a-new-strong-pass"})
+check("password change accepted -> 204", st == 204)
+st, _ = call("GET", "/api/machines")
+check("changing device stays logged in", st == 200)
+st, _ = send(other, "GET", "/api/machines")
+check("other device booted by password change -> 401", st == 401, f"{st}")
+
+print("-- auth: login validation & logout --")
+st, r = call("POST", "/api/auth/login", {"username": "e2e-admin", "password": "wrong-password"})
+check("wrong password -> 401 bad_credentials", st == 401 and r["code"] == "bad_credentials")
+st, r = call("POST", "/api/auth/login", {"username": "ghost", "password": "whatever-strong"})
+check("unknown user -> 401 bad_credentials (no enumeration)", st == 401 and r["code"] == "bad_credentials")
+st, _ = call("POST", "/api/auth/logout")
+check("logout -> 204", st == 204)
+st, r = call("GET", "/api/machines")
+check("route after logout -> 401", st == 401)
+
+print("-- auth: rate limiting --")
+codes = [call("POST", "/api/auth/login", {"username": "e2e-admin", "password": "nope-nope"})[0] for _ in range(12)]
+check("brute force eventually rate-limited -> 429", 429 in codes, str(codes))
+
+sys.exit(1 if fails else 0)
+PY
+kill "$AUTH_PID" 2>/dev/null; AUTH_PID=
+
 echo "-- server log: warnings/errors --"
-grep -E 'level=(WARN|ERROR)' "$D/cloudroof.log" || echo "  (none)"
+# Hide warnings the suite provokes on purpose (the -no-auth notice, and the
+# failed-login attempts the auth tests make) so only unexpected ones surface.
+grep -E 'level=(WARN|ERROR)' "$D/cloudroof.log" "$D/auth.log" 2>/dev/null \
+  | grep -vE 'authentication is DISABLED|auth: failed login' || echo "  (none)"
 echo "== e2e passed =="

@@ -49,7 +49,7 @@ func (s *Server) streamAction(w http.ResponseWriter, r *http.Request) {
 		MachineID: id,
 		ActionID:  actionID,
 		Params:    params,
-		Actor:     actor,
+		Actor:     s.actorFor(r),
 	})
 	if err != nil {
 		// No websocket yet — a normal HTTP error is the honest response.
@@ -72,7 +72,7 @@ func (s *Server) streamAction(w http.ResponseWriter, r *http.Request) {
 		ActionID:    act.ID,
 		Command:     prepared.Command + "  (streamed)",
 		Danger:      act.Danger,
-		Actor:       actor,
+		Actor:       s.actorFor(r),
 		StartedAt:   time.Now().UTC(),
 	}); err != nil {
 		writeWSError(ws, "audit log write failed: "+err.Error())

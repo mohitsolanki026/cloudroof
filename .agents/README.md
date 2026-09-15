@@ -110,8 +110,9 @@ web/src/pages/        Fleet, Machine (tabs), Activity, Settings.
   the allowlist (loopback + `-hosts`), `Origin` / `Sec-Fetch-Site` must be
   same-origin when present, and a state-changing body must be
   `application/json`. The websocket upgrader uses the same check. This is
-  the CSRF and DNS-rebinding defense standing in for auth until v2.5; do not
-  loosen it to make a client "just work" — add the host to `-hosts`.
+  the browser-side CSRF and DNS-rebinding defense that runs in front of the
+  session check (`requireAuth`); do not loosen it to make a client "just
+  work" — add the host to `-hosts`.
 - **Every action executes via `sh -s`** with the rendered command on stdin
   (`engine.Run`). The audit row and the UI preview show the rendered command
   with its `sudo -n` prefix; `sh -s` is the transport. This is what makes the
@@ -243,11 +244,14 @@ Known gaps to be honest about:
 - Azure IPs come from the network API and are best-effort: with only Compute
   permissions the VM lists and powers but `ssh_host` stays empty until set via
   Edit connection.
-- No auth on the HTTP API. The default bind is loopback and `guard` blocks
-  browser cross-site and rebinding attacks, but anyone who can reach the port
-  can drive it. Put it behind a reverse proxy with auth. Multi-user auth is a
-  later milestone.
-- Migrations are append-only as of v1.0: two shipped migrations, 001 frozen.
+- Auth (v2.0, `internal/api/auth.go`): a single admin account with server-side
+  sessions gates every `/api` route and websocket via `requireAuth`, which runs
+  after `guard`. Sessions store only the SHA-256 of the cookie token; bcrypt for
+  passwords; per-IP login rate limit. `-no-auth` opts out for trusted
+  loopback/dev. Login guards the network surface, not the keyring. Multi-user /
+  RBAC is a later milestone.
+- Migrations are append-only: 001 frozen. See `internal/store/schema.go` for the
+  current list.
   Add new ones; never edit a shipped one. See the invariant above.
 
 ## Adversarial review (2026-09-04)
